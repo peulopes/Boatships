@@ -386,7 +386,7 @@ MonoBehaviour:
   depthBeforeSubmerged: 1
   displacementAmount: 3
   floaterCount: 1
-  waterDrag: 0.99
+  waterLinearDrag: 2
   waterAngularDrag: 0.5
 --- !u!1 &705507993
 GameObject:
@@ -530,7 +530,7 @@ MonoBehaviour:
   depthBeforeSubmerged: 1
   displacementAmount: 3
   floaterCount: 1
-  waterDrag: 0.99
+  waterLinearDrag: 2
   waterAngularDrag: 0.5
 --- !u!1 &803442640
 GameObject:
@@ -580,7 +580,7 @@ MonoBehaviour:
   depthBeforeSubmerged: 1
   displacementAmount: 3
   floaterCount: 1
-  waterDrag: 0.99
+  waterLinearDrag: 2
   waterAngularDrag: 0.5
 --- !u!1 &963194225
 GameObject:
@@ -848,7 +848,7 @@ MonoBehaviour:
   depthBeforeSubmerged: 1
   displacementAmount: 3
   floaterCount: 1
-  waterDrag: 0.99
+  waterLinearDrag: 2
   waterAngularDrag: 0.5
 --- !u!1 &2107797329
 GameObject:
@@ -898,5 +898,5 @@ MonoBehaviour:
   depthBeforeSubmerged: 1
   displacementAmount: 3
   floaterCount: 1
-  waterDrag: 0.99
+  waterLinearDrag: 2
   waterAngularDrag: 0.5
