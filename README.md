@@ -8,7 +8,7 @@ A Unity project for boat and ship gameplay experiments. Just a sandbox to learn 
   - Unity Editor version matching ProjectSettings/ProjectVersion.txt
   - Git (to clone the repository)
 - Clone
-  - git clone https://github.com/<your-account> Boatships.git
+  - git clone https://github.com/peulopes/Boatships.git
 - Open
   - Open Unity Hub
   - Add the project folder and open it with the Editor version from ProjectVersion.txt
