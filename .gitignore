@@ -1,0 +1,47 @@
+# Unity generated folders
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+[Uu]ser[Ss]ettings/
+
+# IDE/editor
+.vs/
+.vscode/
+.idea/
+*.sln.iml
+
+# Visual Studio / Unity project files (regenerated)
+*.csproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.unityproj
+*.pidb
+*.booproj
+*.svd
+
+# Debug/DB caches
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# Crash/Reports
+*.stacktrace
+sysinfo.txt
+
+# OS junk
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Icon?
+ehthumbs.db
+Thumbs.db

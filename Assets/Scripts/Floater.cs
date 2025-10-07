@@ -1,5 +1,3 @@
-using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
 
 public class Floater : MonoBehaviour
@@ -8,33 +6,36 @@ public class Floater : MonoBehaviour
     public float depthBeforeSubmerged = 1f;
     public float displacementAmount = 3f;
     public int floaterCount = 1;
-    public float waterDrag = 0.99f;
-    public float waterAngularDrag = 0.5f;
 
-    private void FixedUpdate()
+    // Damping in water
+    public float waterLinearDrag = 2.0f;
+    public float waterAngularDrag = 1.0f;
+
+    void FixedUpdate()
     {
-        // Apply gravity to the rigidbody
-        rigidBody.AddForceAtPosition(Physics.gravity / floaterCount, transform.position, ForceMode.Acceleration);
+        // 1) gravity shared across floaters (if you use multiple)
+        rigidBody.AddForceAtPosition(Physics.gravity / Mathf.Max(1, floaterCount), transform.position, ForceMode.Acceleration);
 
-        // Get the wave height and displacement from the WaveManager
-        Vector3 displacement;
-        float waveHeight = WaveManager.instance.GetWaveHeight(transform.position.x, transform.position.z, out displacement);
+        // 2) sample wave height (ignore horizontal displacement for forces)
+        Vector3 dummy;
+        float waterHeight = WaveManager.instance.GetWaveHeight(transform.position.x, transform.position.z, out dummy);
 
-        // Check if the object is below the wave height
-        if (transform.position.y < waveHeight)
+        // 3) apply buoyancy only when submerged
+        if (transform.position.y < waterHeight)
         {
-            // Calculate the displacement multiplier based on how submerged the object is
-            float displacementMultiplier = Mathf.Clamp01((waveHeight - transform.position.y) / depthBeforeSubmerged) * displacementAmount;
+            float depth = waterHeight - transform.position.y;
+            float submergence = Mathf.Clamp01(depth / Mathf.Max(0.0001f, depthBeforeSubmerged));
+            float lift = submergence * displacementAmount * Mathf.Abs(Physics.gravity.y);
 
-            // Apply an upward force based on the displacement
-            rigidBody.AddForceAtPosition(new Vector3(0f, Mathf.Abs(Physics.gravity.y) * displacementMultiplier, 0f), transform.position, ForceMode.Acceleration);
+            // Upward buoyancy at this floater point
+            rigidBody.AddForceAtPosition(Vector3.up * lift, transform.position, ForceMode.Acceleration);
 
-            // Apply drag to the velocity and angular velocity to simulate water resistance
-            rigidBody.AddForce(displacementMultiplier * -rigidBody.velocity * waterDrag * Time.fixedDeltaTime, ForceMode.VelocityChange);
-            rigidBody.AddTorque(displacementMultiplier * -rigidBody.angularVelocity * waterAngularDrag * Time.fixedDeltaTime, ForceMode.VelocityChange);
-
-            // Apply the horizontal displacement to the floater's position
-            rigidBody.position += displacement * displacementMultiplier * Time.fixedDeltaTime;
+            // 4) add water drag to damp motion while submerged
+            //    (proportional damping; tweak to taste)
+            rigidBody.AddForce(-rigidBody.velocity * waterLinearDrag * submergence, ForceMode.Acceleration);
+            rigidBody.AddTorque(-rigidBody.angularVelocity * waterAngularDrag * submergence, ForceMode.Acceleration);
         }
+
+        // IMPORTANT: Do NOT write to rigidBody.position here (no manual horizontal displacement).
     }
 }
