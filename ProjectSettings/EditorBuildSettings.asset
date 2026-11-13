@@ -6,6 +6,9 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
+    path: Assets/Boatships/Scenes/Boatships_ArchipelagoPrototype.unity
+    guid: 8164ce87bcd57869ab9989975b4a164c
+  - enabled: 1
     path: Assets/Boatships/Scenes/Boatships_Prototype.unity
     guid: 8527cb53f1d64dab393149247c827b69
   - enabled: 1

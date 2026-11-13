@@ -43,6 +43,7 @@
     <UnityVersion>6000.6.7f1</UnityVersion>
   </PropertyGroup>
   <ItemGroup>
+    <Analyzer Include="/home/mplopes/.vscode/extensions/visualstudiotoolsforunity.vstuc-1.3.2/Analyzers/Microsoft.Unity.Analyzers.dll" />
     <Analyzer Include="/home/mplopes/Unity/Hub/Editor/6000.6.7f1/Editor/Data/Tools/BuildPipeline/Unity.SourceGenerators/Unity.SourceGenerators.dll" />
     <Analyzer Include="/home/mplopes/Unity/Hub/Editor/6000.6.7f1/Editor/Data/Tools/BuildPipeline/Unity.SourceGenerators/Unity.Properties.SourceGenerator.dll" />
     <Analyzer Include="/home/mplopes/Unity/Hub/Editor/6000.6.7f1/Editor/Data/Tools/BuildPipeline/Unity.SourceGenerators/Unity.UIToolkit.SourceGenerator.dll" />
@@ -54,12 +55,25 @@
   <ItemGroup>
     <Compile Include="Assets/Boatships/Scripts/Customization/ShipEquipmentDefinition.cs" />
     <Compile Include="Assets/Boatships/Scripts/IsometricFollowCamera.cs" />
+    <Compile Include="Assets/Boatships/Scripts/Combat/ShipCombatTarget.cs" />
+    <Compile Include="Assets/Boatships/Scripts/World/ProceduralIslandChunk.cs" />
     <Compile Include="Assets/Boatships/Scripts/ShipArcadeController.cs" />
+    <Compile Include="Assets/Boatships/Scripts/Combat/BoatshipsProjectile.cs" />
     <Compile Include="Assets/Boatships/Scripts/VirtualJoystick.cs" />
+    <Compile Include="Assets/Boatships/Scripts/World/ArchipelagoNavigationLimiter.cs" />
     <Compile Include="Assets/Boatships/Scripts/Hulls/HullDamageDemo.cs" />
     <Compile Include="Assets/TutorialInfo/Readme.cs" />
+    <Compile Include="Assets/Boatships/Scripts/World/ArchipelagoDebugHUD.cs" />
+    <Compile Include="Assets/Boatships/Scripts/World/ArchipelagoWorld.cs" />
+    <Compile Include="Assets/Boatships/Scripts/Flooding/ShipFlooding.cs" />
+    <Compile Include="Assets/Boatships/Scripts/AI/EnemyShipAI.cs" />
+    <Compile Include="Assets/Boatships/Scripts/Combat/CombatIsometricCamera.cs" />
     <Compile Include="Assets/Boatships/Scripts/Hulls/HullDefinition.cs" />
     <Compile Include="Assets/Boatships/Scripts/OceanWaves.cs" />
+    <Compile Include="Assets/Boatships/Scripts/Combat/WeaponGroupCombat.cs" />
+    <Compile Include="Assets/Boatships/Scripts/Flooding/ShipFloodingDemoHUD.cs" />
+    <Compile Include="Assets/Boatships/Scripts/Combat/WeaponCombatHUD.cs" />
+    <Compile Include="Assets/Boatships/Scripts/AI/EnemyCombatHUD.cs" />
     <Compile Include="Assets/Boatships/Scripts/Hulls/VoxelHull.cs" />
     <Compile Include="Assets/Boatships/Scripts/Customization/ShipCustomizationUI.cs" />
     <Compile Include="Assets/Boatships/Scripts/Customization/ShipCustomization.cs" />
