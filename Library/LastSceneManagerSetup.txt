@@ -1,5 +1,5 @@
 sceneSetups:
-- path: Assets/Boatships/Scenes/Boatships_ArchipelagoPrototype.unity
+- path: Assets/Boatships/Scenes/Boatships_InventoryLootPrototype.unity
   isLoaded: 1
   isActive: 1
   isSubScene: 0

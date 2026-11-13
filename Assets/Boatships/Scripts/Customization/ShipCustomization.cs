@@ -20,11 +20,15 @@ namespace Boatships
             public int x, z, rotationSteps;
             public string hardpointId;
             [NonSerialized] public GameObject instance;
+            public bool paidFromInventory;
         }
 
         [SerializeField] private VoxelHull hull;
         [SerializeField] private ShipArcadeController shipController;
         [SerializeField] private HullDamageDemo damageDemo;
+        [SerializeField] private PortEconomy inventory;
+        [SerializeField] private PortDocking inventoryDock;
+        private bool chargeForNewPlacements;
         [Header("Demo equipment")]
         [SerializeField] private ShipEquipmentDefinition cannon;
         [SerializeField] private ShipEquipmentDefinition storage;
@@ -55,6 +59,15 @@ namespace Boatships
         public ShipEquipmentDefinition Rudder => rudder;
         public string SelectedName => removeMode ? "Remove" : selected != null ? selected.DisplayName : "None";
         public int RotationDegrees => rotationSteps * 90;
+        public string InventoryStatus => inventory != null ? inventory.StockSummary : "";
+        public void BindInventory(PortEconomy source, PortDocking port)
+        {
+            inventory = source;
+            inventoryDock = port;
+        }
+
+        private bool AuthorizedToBuild => !chargeForNewPlacements ||
+            (inventoryDock != null && inventoryDock.IsDocked && inventoryDock.ViewingShipyard);
         public float EquipmentMass
         {
             get
@@ -94,6 +107,8 @@ namespace Boatships
             TryInstallHardpoint(mast, "main_mast");
             TryInstallHardpoint(rudder, "stern_rudder");
             TryInstallDeck(cannon, 6, 9, 1);
+            // Starter equipment is free; charges only apply to subsequent placements.
+            chargeForNewPlacements = inventory != null;
             SetShipyard(true);
             Status = "Shipyard ready. Tap deck to place equipment; finish to sail.";
         }
@@ -112,6 +127,11 @@ namespace Boatships
         {
             if (definition == null) return;
             if (!InShipyard) SetShipyard(true);
+            if (!AuthorizedToBuild)
+            {
+                Status = "New equipment can only be installed at a docked shipyard.";
+                return;
+            }
             removeMode = false;
             selected = definition;
             if (definition.Placement == ShipPlacementKind.Hardpoint)
@@ -136,6 +156,11 @@ namespace Boatships
         public void SelectRemoval()
         {
             if (!InShipyard) SetShipyard(true);
+            if (!AuthorizedToBuild)
+            {
+                Status = "Dock at a port and open its shipyard to modify equipment.";
+                return;
+            }
             removeMode = true;
             Status = "Remove mode: tap a placed deck component.";
         }
@@ -150,15 +175,26 @@ namespace Boatships
         {
             if (hull == null || hull.Definition == null || definition == null ||
                 definition.Placement != ShipPlacementKind.DeckGrid) return false;
+            if (!AuthorizedToBuild)
+            {
+                Status = "Dock at a port before placing equipment.";
+                return false;
+            }
 
             int w = WidthOf(definition, quarterTurns);
             int l = LengthOf(definition, quarterTurns);
             if (!CanPlaceDeck(x, z, w, l)) return false;
 
+            bool paid = chargeForNewPlacements && inventory != null;
+            if (paid && !inventory.TryConsumeEquipment(definition.Kind))
+            {
+                Status = inventory.LastMessage;
+                return false;
+            }
             var newPlacement = new Placement
             {
                 definition = definition, x = x, z = z,
-                rotationSteps = quarterTurns % 4
+                rotationSteps = quarterTurns % 4, paidFromInventory = paid
             };
             Vector3 localPosition = DeckOrigin(x, z, w, l);
             newPlacement.instance = MakeEquipment(definition, localPosition, quarterTurns);
@@ -171,6 +207,11 @@ namespace Boatships
         {
             if (hull == null || hull.Definition == null || definition == null ||
                 definition.Placement != ShipPlacementKind.Hardpoint) return false;
+            if (!AuthorizedToBuild)
+            {
+                Status = "Dock at a port before changing hardpoints.";
+                return false;
+            }
             HullHardpoint socket = null;
             foreach (HullHardpoint s in hull.Definition.Hardpoints)
                 if (s.id == socketId && s.type == definition.HardpointType) socket = s;
@@ -178,7 +219,14 @@ namespace Boatships
             foreach (Placement p in installed)
                 if (p.hardpointId == socketId) return false;
 
-            var newPlacement = new Placement { definition = definition, hardpointId = socketId };
+            bool paid = chargeForNewPlacements && inventory != null;
+            if (paid && !inventory.TryConsumeEquipment(definition.Kind))
+            {
+                Status = inventory.LastMessage;
+                return false;
+            }
+            var newPlacement = new Placement { definition = definition,
+                hardpointId = socketId, paidFromInventory = paid };
             newPlacement.instance = MakeEquipment(definition, socket.localPosition, 0);
             installed.Add(newPlacement);
             return true;
@@ -197,7 +245,7 @@ namespace Boatships
             for (int i = installed.Count - 1; i >= 0; --i)
             {
                 if (installed[i].hardpointId != socketId) continue;
-                RemoveIndex(i);
+                RemoveIndex(i, true);
                 return true;
             }
             return false;
@@ -213,16 +261,19 @@ namespace Boatships
                 int l = LengthOf(p.definition, p.rotationSteps);
                 if (x < p.x || x >= p.x + w || z < p.z || z >= p.z + l) continue;
                 string removedName = p.definition.DisplayName;
-                RemoveIndex(i);
+                RemoveIndex(i, true);
                 Status = removedName + " removed.";
                 return true;
             }
             return false;
         }
 
-        private void RemoveIndex(int i)
+        private void RemoveIndex(int i, bool playerRemoved = false)
         {
-            if (installed[i].instance != null) Destroy(installed[i].instance);
+            Placement placement = installed[i];
+            if (playerRemoved && placement.paidFromInventory && inventory != null)
+                inventory.RefundEquipment(placement.definition.Kind);
+            if (placement.instance != null) Destroy(placement.instance);
             installed.RemoveAt(i);
         }
 
@@ -361,6 +412,11 @@ namespace Boatships
         private void TryScreenTap(Vector2 screen)
         {
             if (Camera.main == null || IsOverUI(screen)) return;
+            if (!AuthorizedToBuild)
+            {
+                Status = "Dock at a port and select Customize Ship to build.";
+                return;
+            }
             HullDefinition d = hull.Definition;
             float top = d.BlockCenter(0, d.Height - 1, 0).y + d.BlockSize * 0.5f;
             Plane deck = new Plane(hull.transform.up, hull.transform.TransformPoint(new Vector3(0f, top, 0f)));
@@ -376,7 +432,8 @@ namespace Boatships
             else if (selected != null && selected.Placement == ShipPlacementKind.DeckGrid)
             {
                 if (!TryInstallDeck(selected, x, z, rotationSteps))
-                    Status = "Invalid cell: deck missing, occupied, or out of bounds.";
+                    Status = inventory != null && !inventory.CanAffordEquipment(selected.Kind) ?
+                        inventory.LastMessage : "Invalid cell: deck missing, occupied, or out of bounds.";
             }
         }
 

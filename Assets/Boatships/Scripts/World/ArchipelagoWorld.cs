@@ -100,7 +100,7 @@ namespace Boatships
                 float jitterZ = ((float)rng.NextDouble() - 0.5f) * cellSize * 0.22f;
                 float radius = cellSize * Mathf.Lerp(0.23f, 0.32f, (float)rng.NextDouble());
                 double kindRoll = rng.NextDouble();
-                IslandKind kind = kindRoll < 0.16 ? IslandKind.PortSite :
+                IslandKind kind = guaranteed || kindRoll < 0.16 ? IslandKind.PortSite :
                     kindRoll < 0.29 ? IslandKind.PirateBaseSite :
                     kindRoll < 0.41 ? IslandKind.TreasureSite : IslandKind.Deserted;
                 sites.Add(cell, new IslandSite
@@ -167,6 +167,26 @@ namespace Boatships
                 if (squared >= shortest) continue;
                 best = site;
                 shortest = squared;
+                found = true;
+            }
+            return found;
+        }
+
+        /// <summary>Find the nearest generated island of a specific type, including unloaded islands.
+        /// The list is seed-based logical world state; no GameObject/chunk needs to be active.</summary>
+        public bool TryNearestIslandOfKind(Vector3 position, IslandKind kind, out IslandSite best)
+        {
+            best = default(IslandSite);
+            float shortest = float.MaxValue;
+            bool found = false;
+            Vector2 point = new Vector2(position.x, position.z);
+            foreach (IslandSite site in sites.Values)
+            {
+                if (site.Kind != kind) continue;
+                float distance = (site.Center - point).sqrMagnitude;
+                if (distance >= shortest) continue;
+                shortest = distance;
+                best = site;
                 found = true;
             }
             return found;

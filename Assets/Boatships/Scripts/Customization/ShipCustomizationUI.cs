@@ -63,6 +63,7 @@ namespace Boatships
             {
                 statusLabel.text = "Selected: " + shipyard.SelectedName +
                     "   |   Rotation: " + shipyard.RotationDegrees + "°\n" +
+                    shipyard.InventoryStatus + "\n" +
                     "Items: " + shipyard.InstalledCount +
                     "   |   Added mass: " + shipyard.EquipmentMass.ToString("0") + " kg\n" +
                     shipyard.Status;
