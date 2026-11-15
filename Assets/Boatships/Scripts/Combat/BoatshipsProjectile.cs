@@ -8,6 +8,38 @@ namespace Boatships
     /// </summary>
     public sealed class BoatshipsProjectile : MonoBehaviour
     {
+        private static readonly System.Collections.Generic.Queue<BoatshipsProjectile> pool =
+            new System.Collections.Generic.Queue<BoatshipsProjectile>();
+        private bool pooled;
+
+        public static BoatshipsProjectile Spawn(Vector3 position, Material material)
+        {
+            BoatshipsProjectile projectile = null;
+            while (pool.Count > 0 && projectile == null) projectile = pool.Dequeue();
+            if (projectile == null)
+            {
+                GameObject ball = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                ball.name = "Pooled Cannonball";
+                Destroy(ball.GetComponent<Collider>());
+                projectile = ball.AddComponent<BoatshipsProjectile>();
+                projectile.pooled = true;
+            }
+            projectile.transform.position = position;
+            projectile.transform.localScale = Vector3.one * 0.22f;
+            projectile.GetComponent<Renderer>().sharedMaterial = material;
+            projectile.gameObject.SetActive(true);
+            return projectile;
+        }
+
+        private void Release()
+        {
+            launched = false;
+            owner = null;
+            ocean = null;
+            if (!pooled || pool.Count >= 64) { Destroy(gameObject); return; }
+            gameObject.SetActive(false);
+            pool.Enqueue(this);
+        }
         [SerializeField, Min(0.1f)] private float lifetime = 5f;
         private readonly RaycastHit[] impacts = new RaycastHit[16];
         private Vector3 velocity;
@@ -37,7 +69,7 @@ namespace Boatships
             if (!launched) return;
             float dt = Time.fixedDeltaTime;
             remaining -= dt;
-            if (remaining <= 0f) { Destroy(gameObject); return; }
+            if (remaining <= 0f) { Release(); return; }
 
             Vector3 start = transform.position;
             Vector3 nextVelocity = velocity + Vector3.down * (gravity * dt);
@@ -50,27 +82,29 @@ namespace Boatships
                     distance, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
                 float closest = distance + 1f;
                 ShipCombatTarget receiver = null;
+                bool blocked = false;
                 Vector3 point = destination;
                 for (int i = 0; i < count; ++i)
                 {
                     ShipCombatTarget candidate = impacts[i].collider.GetComponentInParent<ShipCombatTarget>();
-                    if (candidate == owner) continue;
+                    if (candidate != null && candidate == owner) continue;
                     if (impacts[i].distance >= closest) continue;
                     closest = impacts[i].distance;
+                    blocked = true;
                     receiver = candidate;
                     point = impacts[i].point;
                 }
-                if (receiver != null)
+                if (blocked)
                 {
-                    receiver.ReceiveImpact(point, damage, radius);
-                    Destroy(gameObject);
+                    if (receiver != null) receiver.ReceiveImpact(point, damage, radius);
+                    Release();
                     return;
                 }
             }
             transform.position = destination;
             velocity = nextVelocity;
             if (ocean != null && destination.y < ocean.SampleHeight(destination.x, destination.z, Time.time))
-                Destroy(gameObject);
+                Release();
         }
     }
 }

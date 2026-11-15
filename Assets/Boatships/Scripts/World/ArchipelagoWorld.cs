@@ -5,6 +5,7 @@ using UnityEngine;
 namespace Boatships
 {
     public enum IslandKind { Deserted, PortSite, PirateBaseSite, TreasureSite }
+    public enum IslandBiome { Tropical, Volcanic, Frozen }
 
     /// <summary>Seeded finite archipelago. Generated chunks are disposable views;
     /// island locations and kinds are deterministic from seed + cell coordinates.
@@ -20,6 +21,7 @@ namespace Boatships
             public float Radius;
             public IslandKind Kind;
             public int DetailSeed;
+            public IslandBiome Biome;
         }
 
         [Header("World (fixed number of cells)")]
@@ -46,8 +48,15 @@ namespace Boatships
         private readonly List<Vector2Int> stale = new List<Vector2Int>();
         private Vector2Int lastCell = new Vector2Int(int.MinValue, int.MinValue);
         private bool started;
+        [SerializeField] private bool campaignBiomes;
+        public void EnableCampaignBiomes() => campaignBiomes = true;
 
         public int Seed => seed;
+        public void UseSeed(int newSeed)
+        {
+            if (started) Regenerate(newSeed);
+            else seed = newSeed;
+        }
         public int LoadedChunkCount => activeChunks.Count;
         public int IslandCount => sites.Count;
         public float SideLength => cellsPerAxis * cellSize;
@@ -128,7 +137,8 @@ namespace Boatships
                     Center = new Vector2(x * cellSize + jitterX, z * cellSize + jitterZ),
                     Radius = radius,
                     Kind = kind,
-                    DetailSeed = StableHash(seed + 71, x, z)
+                    DetailSeed = StableHash(seed + 71, x, z),
+                    Biome = campaignBiomes ? (IslandBiome)((uint)StableHash(seed + 91, x, z) % 3u) : IslandBiome.Tropical
                 });
             }
             if (started) UpdateLoadedChunks();

@@ -49,6 +49,20 @@ namespace Boatships
         private int preferredSide = 1; // 1 starboard, -1 port; selected when entering range.
         private EnemyState state;
         private float nextFireAllowedAt;
+        private bool patrolEnabled;
+        private Vector3 patrolOrigin;
+        private float patrolPhase;
+
+        public void ConfigureEncounter(EncounterKind kind, int tier, Vector3 origin)
+        {
+            patrolEnabled = true;
+            patrolOrigin = origin;
+            detectionRange = 48f;
+            speed = kind == EncounterKind.Raider ? 6.5f : kind == EncounterKind.Brig ? 4f : 5f;
+            damage = 16f + Mathf.Clamp(tier, 1, 5) * 5f;
+            reloadSeconds = Mathf.Max(1.8f, 4.2f - tier * 0.3f);
+            retreatAtHullFraction = kind == EncounterKind.Patrol ? 0.12f : 0.3f;
+        }
 
         public EnemyState State => state;
         public float HullFraction => self != null && self.TotalVoxels > 0
@@ -112,7 +126,16 @@ namespace Boatships
             if (distance > detectionRange)
             {
                 state = EnemyState.Waiting;
-                FollowOcean(dt, 0f, body.rotation.eulerAngles.y);
+                float heading = body.rotation.eulerAngles.y;
+                if (patrolEnabled)
+                {
+                    patrolPhase += dt * 0.08f;
+                    Vector3 waypoint = patrolOrigin + new Vector3(Mathf.Sin(patrolPhase), 0f,
+                        Mathf.Cos(patrolPhase)) * 12f;
+                    Vector3 direction = waypoint - body.position;
+                    heading = Mathf.Atan2(direction.x, direction.z) * Mathf.Rad2Deg;
+                }
+                FollowOcean(dt, patrolEnabled ? speed * 0.45f : 0f, heading);
                 return;
             }
 
@@ -205,15 +228,7 @@ namespace Boatships
                 if (muzzle == null || Time.time < ready[i]) continue;
                 if (!TryFindBallisticVelocity(muzzle.position, out Vector3 velocity)) continue;
 
-                GameObject ball = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                ball.name = "Enemy Cannonball";
-                ball.transform.position = muzzle.position;
-                ball.transform.localScale = Vector3.one * 0.22f;
-                if (cannonballMaterial != null)
-                    ball.GetComponent<MeshRenderer>().sharedMaterial = cannonballMaterial;
-                Collider collider = ball.GetComponent<Collider>();
-                if (collider != null) Destroy(collider);
-                BoatshipsProjectile projectile = ball.AddComponent<BoatshipsProjectile>();
+                BoatshipsProjectile projectile = BoatshipsProjectile.Spawn(muzzle.position, cannonballMaterial);
                 projectile.Launch(velocity, self, ocean, damage, impactRadius, shotGravity);
                 ready[i] = Time.time + reloadSeconds;
                 shots++;

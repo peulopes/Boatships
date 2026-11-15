@@ -21,6 +21,16 @@ namespace Boatships
 
         private Mesh mesh;
         private Vector3[] vertices;
+        public float MeshUpdateInterval { get; set; }
+        private float nextMeshUpdate;
+        public void SetResolution(int cells)
+        {
+            cells = Mathf.Clamp(cells, 8, 100);
+            if (cellsPerSide == cells) return;
+            cellsPerSide = cells;
+            if (mesh != null) Destroy(mesh);
+            BuildMesh();
+        }
 
         public Transform FollowTarget { set => followTarget = value; }
 
@@ -53,6 +63,8 @@ namespace Boatships
             }
 
             // The ship and renderer sample identical absolute world coordinates.
+            if (Time.time < nextMeshUpdate) return;
+            nextMeshUpdate = Time.time + MeshUpdateInterval;
             float step = width / cellsPerSide;
             int rowLength = cellsPerSide + 1;
             float half = width * 0.5f;

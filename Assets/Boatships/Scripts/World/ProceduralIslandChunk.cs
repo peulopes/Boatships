@@ -11,11 +11,18 @@ namespace Boatships
     {
         private Mesh terrainMesh;
         private Mesh treeCrownMesh;
+        private readonly List<Material> biomeMaterials = new List<Material>();
 
         public void Build(ArchipelagoWorld.IslandSite site, int resolution, int worldSeed,
             Material sand, Material grass, Material rock, Material bark,
             Material leaves, Material stone, Material port, Material pirate, Material treasure)
         {
+            if (site.Biome != IslandBiome.Tropical)
+            {
+                sand = BiomeMaterial(sand, site.Biome == IslandBiome.Frozen ? new Color(0.8f, 0.9f, 0.95f) : new Color(0.24f, 0.22f, 0.21f));
+                grass = BiomeMaterial(grass, site.Biome == IslandBiome.Frozen ? new Color(0.65f, 0.8f, 0.86f) : new Color(0.34f, 0.17f, 0.12f));
+                leaves = BiomeMaterial(leaves, site.Biome == IslandBiome.Frozen ? new Color(0.5f, 0.7f, 0.72f) : new Color(0.3f, 0.27f, 0.18f));
+            }
             resolution = Mathf.Max(8, resolution);
             float radius = site.Radius;
             float total = radius * 2f;
@@ -64,7 +71,7 @@ namespace Boatships
 
             System.Random random = new System.Random(site.DetailSeed);
             treeCrownMesh = CreateCone(8);
-            int trees = random.Next(7, 13);
+            int trees = site.Biome == IslandBiome.Volcanic ? 2 : random.Next(7, 13);
             int rocks = random.Next(2, 5);
             for (int i = 0; i < trees; i++)
             {
@@ -111,7 +118,17 @@ namespace Boatships
             float inward = Mathf.Clamp01(1f - distance / warpedRadius);
             float baseHeight = -1.6f + 8.5f * Mathf.Pow(inward, 1.22f);
             float detailed = (noise - 0.5f) * 2.2f * inward;
-            return baseHeight + detailed;
+            float extra = site.Biome == IslandBiome.Volcanic ?
+                5f * Mathf.Sin(inward * Mathf.PI) * inward : 0f;
+            return baseHeight + detailed + extra;
+        }
+
+        private Material BiomeMaterial(Material source, Color color)
+        {
+            if (source == null) return null;
+            Material instance = new Material(source) { color = color };
+            biomeMaterials.Add(instance);
+            return instance;
         }
 
         private bool TryDecorationPoint(ArchipelagoWorld.IslandSite site, int seed,
@@ -200,6 +217,7 @@ namespace Boatships
         {
             if (terrainMesh != null) Destroy(terrainMesh);
             if (treeCrownMesh != null) Destroy(treeCrownMesh);
+            foreach (Material material in biomeMaterials) if (material != null) Destroy(material);
         }
     }
 }

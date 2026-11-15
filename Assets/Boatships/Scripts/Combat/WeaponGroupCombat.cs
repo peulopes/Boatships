@@ -49,6 +49,7 @@ namespace Boatships
 
         // Optional M13 crew performance input; 1.0 preserves original cannon timing.
         public float CrewReloadMultiplier { get; set; } = 1f;
+        public float UpgradeDamageMultiplier { get; set; } = 1f;
         public event Action<int> GroupFired;
 
         public int ActiveGroup => group;
@@ -290,16 +291,9 @@ namespace Boatships
 
         private void SpawnCannonball(Vector3 start, Vector3 direction)
         {
-            GameObject ball = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            ball.name = "Cannonball (prototype)";
-            ball.transform.position = start;
-            ball.transform.localScale = Vector3.one * 0.22f;
-            if (cannonballMaterial != null)
-                ball.GetComponent<MeshRenderer>().sharedMaterial = cannonballMaterial;
-            Collider sphere = ball.GetComponent<Collider>();
-            if (sphere != null) Destroy(sphere);
-            BoatshipsProjectile projectile = ball.AddComponent<BoatshipsProjectile>();
-            projectile.Launch(direction * muzzleSpeed, owner, ocean, damage, blastRadius, gravity);
+            BoatshipsProjectile projectile = BoatshipsProjectile.Spawn(start, cannonballMaterial);
+            projectile.Launch(direction * muzzleSpeed, owner, ocean,
+                damage * UpgradeDamageMultiplier, blastRadius, gravity);
         }
     }
 }

@@ -53,5 +53,8 @@ namespace Boatships
             Direction = Vector2.zero;
             if (handle != null) handle.anchoredPosition = Vector2.zero;
         }
+
+        private void OnApplicationFocus(bool focused) { if (!focused) OnDisable(); }
+        private void OnApplicationPause(bool paused) { if (paused) OnDisable(); }
     }
 }

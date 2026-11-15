@@ -26,6 +26,8 @@ namespace Boatships
     {
         public int x, y, z;
         public float health;
+        public bool removedFromDesign;
+        public bool addedToDesign;
     }
 
     [Serializable]

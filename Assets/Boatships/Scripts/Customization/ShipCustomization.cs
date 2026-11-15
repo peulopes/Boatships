@@ -51,6 +51,7 @@ namespace Boatships
 
         public bool InShipyard { get; private set; } = true;
         public bool Removing => removeMode;
+        public bool HullEditing { get; set; }
         public string Status { get; private set; } = "Select equipment then tap a deck cell.";
         public int InstalledCount => installed.Count;
         public ShipEquipmentDefinition Cannon => cannon;
@@ -366,7 +367,7 @@ namespace Boatships
             for (int ix = x; ix < x + w; ++ix)
             for (int iz = z; iz < z + l; ++iz)
             {
-                if (!d.IsDeckCell(ix, iz) || !hull.HasBlock(ix, d.Height - 1, iz)) return false;
+                if (!hull.HasBlock(ix, d.Height - 1, iz)) return false;
                 foreach (Placement p in installed)
                 {
                     // Reserve a small zone around the fixed mast hardpoint.
@@ -453,7 +454,7 @@ namespace Boatships
 
         private void Update()
         {
-            if (!InShipyard || hull == null) return;
+            if (!InShipyard || HullEditing || hull == null) return;
             Keyboard keyboard = Keyboard.current;
             if (keyboard != null && keyboard.rKey.wasPressedThisFrame) Rotate();
 

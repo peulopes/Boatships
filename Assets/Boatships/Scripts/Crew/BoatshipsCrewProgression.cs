@@ -10,8 +10,8 @@ namespace Boatships
     /// <summary>
     /// M13: persistent personal crew experience / health. The M8 tavern roster is the
     /// authoritative list of recruits; this component never rewrites economy or M11 saves.
-    /// Injuries affect M13 speed/reload modifiers. Overboard recovery is a port-based
-    /// placeholder pending a future physical rescue and shipwreck system.
+    /// Injuries affect speed/reload modifiers. M14 optionally replaces port recovery
+    /// with physical survivors whose locations share this crew save.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class BoatshipsCrewProgression : MonoBehaviour
@@ -24,6 +24,8 @@ namespace Boatships
             public float health = 100f;
             public bool dead;
             public bool overboard;
+            public bool hasRescuePosition;
+            public Vector3 rescuePosition;
         }
 
         [Serializable]
@@ -59,6 +61,71 @@ namespace Boatships
         private float nextSailingXp;
         private Vector3 previousPosition;
         private string status = "Waiting for crew initialization...";
+        private BoatshipsRescueSystem rescueSystem;
+
+        public bool IsReady => ready && world != null && world.Seed == seed && economy.ActiveSeed == seed;
+        public bool CanCheckpoint => IsReady && !saveLocked;
+        public bool LastSaveSucceeded { get; private set; }
+
+        public void GetBoardingParty(List<string> party)
+        {
+            party.Clear();
+            if (!IsReady) return;
+            foreach (KeyValuePair<string, SailorState> entry in states)
+                if (!entry.Value.dead && !entry.Value.overboard && entry.Value.health > 0f &&
+                    crew.IsCrewActive(entry.Key) && crew.GetCrewDuty(entry.Key) == CrewDuty.Fighter)
+                    party.Add(entry.Key);
+        }
+
+        public float BoardingPower(string key)
+        {
+            if (!states.TryGetValue(key, out SailorState sailor)) return 0f;
+            if (sailor.dead || sailor.overboard || sailor.health <= 0f) return 0f;
+            return (8f + Mathf.Min(9, sailor.experience / 40) * 2f) * Mathf.Clamp01(sailor.health / 100f);
+        }
+
+        public void ApplyBoardingInjury(string key, float damage) => Injure(key, damage);
+
+        public void AwardBoardingExperience(string key)
+        {
+            if (states.TryGetValue(key, out SailorState sailor) && !sailor.dead)
+                sailor.experience = Mathf.Min(50000, sailor.experience + 25);
+            SaveStates();
+        }
+
+        public void SetRescueSystem(BoatshipsRescueSystem source) => rescueSystem = source;
+
+        public void GetSurvivors(Dictionary<string, Vector3> survivors)
+        {
+            survivors.Clear();
+            if (!IsReady) return;
+            foreach (SailorState sailor in states.Values)
+                if (sailor.overboard && !sailor.dead && sailor.hasRescuePosition)
+                    survivors.Add(sailor.key, sailor.rescuePosition);
+        }
+
+        public bool TryRescue(string key, float radius)
+        {
+            if (!IsReady || saveLocked || IsDocked() || (flooding != null && flooding.IsSinking) ||
+                !states.TryGetValue(key, out SailorState sailor) || sailor.dead || !sailor.overboard ||
+                !sailor.hasRescuePosition) return false;
+            Vector3 offset = movement.transform.position - sailor.rescuePosition;
+            offset.y = 0f;
+            if (offset.sqrMagnitude > radius * radius) return false;
+            float previousHealth = sailor.health;
+            sailor.overboard = false;
+            sailor.health = Mathf.Max(35f, sailor.health);
+            if (!TrySaveStates())
+            {
+                sailor.overboard = true;
+                sailor.health = previousHealth;
+                return false;
+            }
+            ApplyAvailability();
+            ApplyBonuses();
+            status = "Survivor rescued and returned to the crew. Port treatment is available.";
+            return true;
+        }
 
         public string Status => status;
         public string SaveFilePath => seed == int.MinValue ? "Not initialized" : SavePath(seed);
@@ -143,6 +210,8 @@ namespace Boatships
                 saveLocked = false;
                 LoadStates();
                 previousPosition = movement.transform.position;
+                EnsureRoster();
+                ApplyAvailability();
             }
 
             Keyboard kb = Keyboard.current;
@@ -155,6 +224,7 @@ namespace Boatships
                 if (kb.f12Key.wasPressedThisFrame) SendSelectedOverboardForTest();
             }
 
+            if (flooding != null && !flooding.IsSinking) sinkingProcessed = false;
             if (flooding != null && flooding.IsSinking && !sinkingProcessed)
             {
                 sinkingProcessed = true;
@@ -198,7 +268,13 @@ namespace Boatships
                 PortEconomy.CrewMember member = economy.Crew[i];
                 if (member == null) continue;
                 string id = Key(member, i);
-                if (states.ContainsKey(id)) continue;
+                if (states.TryGetValue(id, out SailorState existing))
+                {
+                    // Older M13 files recorded overboard status without a sea position.
+                    if (existing.overboard && !existing.hasRescuePosition)
+                        SetRescuePosition(existing);
+                    continue;
+                }
                 states.Add(id, new SailorState { key = id });
             }
         }
@@ -305,9 +381,15 @@ namespace Boatships
                 if (s.dead || s.overboard || !crew.IsCrewActive(entry.Key)) continue;
                 // Critical injuries reduce the chance of escaping the sinking ship.
                 if (s.health < 25f && UnityEngine.Random.value < 0.3f) s.dead = true;
-                else { s.overboard = true; overboard++; }
+                else
+                {
+                    SetRescuePosition(s);
+                    s.overboard = true;
+                    overboard++;
+                }
             }
-            status = "Ship sank: " + overboard + " sailors overboard. Recover at a port (prototype).";
+            status = "Ship sank: " + overboard + " sailors overboard. " +
+                (rescueSystem != null ? "Sail close to rescue survivors." : "Recover at a port (prototype).");
             ApplyAvailability();
             SaveStates();
         }
@@ -344,15 +426,22 @@ namespace Boatships
         public void SendSelectedOverboardForTest()
         {
             string key = crew != null ? crew.SelectedCrewKey : null;
-            if (key == null || !states.TryGetValue(key, out SailorState s) || s.dead) return;
+            if (key == null || !states.TryGetValue(key, out SailorState s) || s.dead || s.overboard) return;
+            SetRescuePosition(s);
             s.overboard = true;
-            status = "TEST: Selected sailor overboard. Dock and press F11 to recover.";
+            status = rescueSystem != null ? "TEST: Sail near the survivor and press F11 to rescue." :
+                "TEST: Selected sailor overboard. Dock and press F11 to recover.";
             ApplyAvailability();
             SaveStates();
         }
 
         public void RecoverOverboardAtPort()
         {
+            if (rescueSystem != null)
+            {
+                rescueSystem.RescueNearby();
+                return;
+            }
             if (!IsDocked()) { status = "Dock first to recover missing survivors."; return; }
             int recovered = 0;
             foreach (SailorState s in states.Values)
@@ -367,16 +456,24 @@ namespace Boatships
             SaveStates();
         }
 
+        private void SetRescuePosition(SailorState sailor)
+        {
+            Vector3 position = crew.CrewWorldPosition(sailor.key);
+            Vector3 side = movement.transform.right * ((states.Count % 2 == 0) ? 5f : -5f);
+            sailor.rescuePosition = new Vector3(position.x + side.x, 0f, position.z + side.z);
+            sailor.hasRescuePosition = true;
+        }
+
         private static string SavePath(int saveSeed) => Path.Combine(Application.persistentDataPath,
             "boatships_crew_progression_v1_" + saveSeed + ".json");
 
         private void LoadStates()
         {
             string path = SavePath(seed);
-            if (!File.Exists(path)) return;
+            if (!BoatshipsSaveStore.Exists(path)) return;
             try
             {
-                CrewProgressFile file = JsonUtility.FromJson<CrewProgressFile>(File.ReadAllText(path));
+                CrewProgressFile file = JsonUtility.FromJson<CrewProgressFile>(BoatshipsSaveStore.Read(path));
                 if (file == null || file.version != 1 || file.seed != seed || file.sailors == null)
                     throw new InvalidDataException("Invalid crew progression file version or seed.");
                 foreach (SailorState saved in file.sailors)
@@ -395,27 +492,26 @@ namespace Boatships
             }
         }
 
-        public void SaveStates()
+        public void SaveStates() => TrySaveStates();
+
+        private bool TrySaveStates()
         {
-            if (!ready || seed == int.MinValue || saveLocked) return;
+            LastSaveSucceeded = false;
+            if (!ready || seed == int.MinValue || saveLocked) return false;
             try
             {
                 var file = new CrewProgressFile { seed = seed };
                 foreach (SailorState sailor in states.Values) file.sailors.Add(sailor);
-                string path = SavePath(seed), temp = path + ".tmp", backup = path + ".bak";
-                File.WriteAllText(temp, JsonUtility.ToJson(file, true));
-                if (File.Exists(path))
-                {
-                    try { File.Replace(temp, path, backup); }
-                    catch (NotSupportedException) { File.Copy(path, backup, true); File.Copy(temp, path, true); File.Delete(temp); }
-                    catch (IOException) { File.Copy(path, backup, true); File.Copy(temp, path, true); File.Delete(temp); }
-                }
-                else File.Move(temp, path);
+                string path = SavePath(seed);
+                BoatshipsSaveStore.Write(path, JsonUtility.ToJson(file, true));
+                LastSaveSucceeded = true;
+                return true;
             }
             catch (Exception ex)
             {
                 status = "Crew progression save failed: " + ex.Message;
                 Debug.LogWarning("Boatships M13: " + status, this);
+                return false;
             }
         }
 

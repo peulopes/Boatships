@@ -7,7 +7,7 @@ using UnityEngine.InputSystem;
 
 namespace Boatships
 {
-    public enum CrewDuty { Idle = 0, Gunner = 1, Carpenter = 2, Sailor = 3 }
+    public enum CrewDuty { Idle = 0, Gunner = 1, Carpenter = 2, Sailor = 3, Fighter = 4 }
 
     /// <summary>
     /// Milestone 12: physical deck crew driven by the saved M8 tavern roster.
@@ -44,6 +44,7 @@ namespace Boatships
             public float nextRepairAt;
             public string activity;
             public bool unavailable;
+            public Transform boardingTarget;
             public readonly List<Vector3> path = new List<Vector3>();
             public int nextWaypoint;
             public Vector3 previousGoal;
@@ -72,6 +73,19 @@ namespace Boatships
         private string status = "Waiting for tavern roster...";
 
         public int ActiveCrewCount => agents.Count;
+        public void SetBoardingTarget(string key, Transform destination)
+        {
+            foreach (Agent agent in agents)
+                if (agent.key == key)
+                {
+                    agent.boardingTarget = destination;
+                    if (destination == null && agent.visual != null)
+                    {
+                        agent.visual.localPosition = agent.home;
+                        agent.previousBlockCount = -1;
+                    }
+                }
+        }
         public event Action<string> CrewCompletedRepair;
         public string SelectedCrewKey => agents.Count == 0 ? null : agents[Mathf.Clamp(selectedIndex, 0, agents.Count - 1)].key;
 
@@ -104,6 +118,8 @@ namespace Boatships
         }
         public int TotalCrewCount => economy != null && economy.Crew != null ? economy.Crew.Count : 0;
         public int ActiveSeed => activeSeed;
+        public bool CanCheckpoint => ready && !assignmentSaveLocked;
+        public bool LastSaveSucceeded { get; private set; }
         public string Status => status;
         public int SelectedIndex => selectedIndex;
         public string AssignmentSavePath => activeSeed == int.MinValue ? "Not initialized" : SavePath(activeSeed);
@@ -182,7 +198,7 @@ namespace Boatships
         {
             if (agents.Count == 0) return;
             Agent agent = agents[Mathf.Clamp(selectedIndex, 0, agents.Count - 1)];
-            agent.duty = (CrewDuty)(((int)agent.duty + 1) % 4);
+            agent.duty = (CrewDuty)(((int)agent.duty + 1) % 5);
             agent.workProgress = 0f;
             dutyByKey[agent.key] = agent.duty;
             SetRoleColor(agent);
@@ -214,6 +230,7 @@ namespace Boatships
             if (string.Equals(role, "Gunner", StringComparison.OrdinalIgnoreCase)) return CrewDuty.Gunner;
             if (string.Equals(role, "Carpenter", StringComparison.OrdinalIgnoreCase)) return CrewDuty.Carpenter;
             if (string.Equals(role, "Sailor", StringComparison.OrdinalIgnoreCase)) return CrewDuty.Sailor;
+            if (string.Equals(role, "Fighter", StringComparison.OrdinalIgnoreCase)) return CrewDuty.Fighter;
             return CrewDuty.Idle;
         }
 
@@ -324,6 +341,16 @@ namespace Boatships
         private void StepAgent(Agent a, int index, float dt)
         {
             if (a.visual == null || a.unavailable || hull == null || hull.Definition == null) return;
+            if (a.boardingTarget != null)
+            {
+                VoxelHull enemyHull = a.boardingTarget.GetComponent<VoxelHull>();
+                Vector3 requested = new Vector3((index % 2 - 0.5f) * 0.5f, 0f, index * 0.3f - 0.7f);
+                if (enemyHull == null || !enemyHull.TryNearestDeckPoint(requested, out Vector3 station)) return;
+                Vector3 destination = a.boardingTarget.TransformPoint(station);
+                a.visual.position = Vector3.MoveTowards(a.visual.position, destination, walkingSpeed * dt);
+                a.activity = "Boarding enemy vessel";
+                return;
+            }
             if (flooding != null && flooding.IsSinking)
             {
                 a.activity = "Abandoning sinking vessel (visual placeholder)";
@@ -547,16 +574,16 @@ namespace Boatships
         private void LoadAssignments()
         {
             string path = SavePath(activeSeed);
-            if (!File.Exists(path)) return;
+            if (!BoatshipsSaveStore.Exists(path)) return;
             try
             {
-                AssignmentFile data = JsonUtility.FromJson<AssignmentFile>(File.ReadAllText(path));
+                AssignmentFile data = JsonUtility.FromJson<AssignmentFile>(BoatshipsSaveStore.Read(path));
                 if (data == null || data.version != 1 || data.seed != activeSeed || data.assignments == null)
                     throw new InvalidDataException("Crew save version/seed mismatch.");
                 foreach (Assignment assignment in data.assignments)
                 {
                     if (assignment == null || string.IsNullOrEmpty(assignment.crewKey)) continue;
-                    if ((int)assignment.duty < 0 || (int)assignment.duty > 3) continue;
+                    if ((int)assignment.duty < 0 || (int)assignment.duty > 4) continue;
                     dutyByKey[assignment.crewKey] = assignment.duty;
                 }
             }
@@ -570,6 +597,7 @@ namespace Boatships
 
         public void SaveAssignments()
         {
+            LastSaveSucceeded = false;
             if (!ready || activeSeed == int.MinValue) return;
             if (assignmentSaveLocked)
             {
@@ -582,16 +610,8 @@ namespace Boatships
                 foreach (KeyValuePair<string, CrewDuty> entry in dutyByKey)
                     data.assignments.Add(new Assignment { crewKey = entry.Key, duty = entry.Value });
                 string path = SavePath(activeSeed);
-                string temp = path + ".tmp";
-                string backup = path + ".bak";
-                File.WriteAllText(temp, JsonUtility.ToJson(data, true));
-                if (File.Exists(path))
-                {
-                    File.Copy(path, backup, true);
-                    File.Copy(temp, path, true);
-                    File.Delete(temp);
-                }
-                else File.Move(temp, path);
+                BoatshipsSaveStore.Write(path, JsonUtility.ToJson(data, true));
+                LastSaveSucceeded = true;
             }
             catch (Exception ex)
             {

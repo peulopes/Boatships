@@ -118,6 +118,7 @@ namespace Boatships
 
         public void Dock()
         {
+            RefreshPort();
             if (!CanDock)
             {
                 Status = "Sail closer to the nearest port, or use Jump to Port to test.";

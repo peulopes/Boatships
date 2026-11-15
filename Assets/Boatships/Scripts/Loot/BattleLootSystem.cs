@@ -25,6 +25,9 @@ namespace Boatships
         [SerializeField] private ShipCustomization shipyard;
         [SerializeField] private OceanWaves ocean;
         [SerializeField, Min(2f)] private float collectRadius = 9f;
+        [SerializeField] private bool leavePersistentWreck;
+
+        public void EnablePersistentWreck() => leavePersistentWreck = true;
 
         private GameObject marker;
         private PortEconomy.LootCache pending;
@@ -59,17 +62,19 @@ namespace Boatships
             if (!encounterProcessed && (pirate.RemainingVoxels <= 0 ||
                 (pirateFlooding != null && pirateFlooding.IsSinking)))
             {
-                encounterProcessed = true;
                 if (!economy.HasLootEntry(EnemyLootId))
                 {
                     PortEconomy.LootCache reward = RollLoot(world.Seed, pirate.transform.position);
+                    reward.shipwreck = leavePersistentWreck;
                     if (economy.TryRegisterLoot(reward))
                     {
+                        encounterProcessed = true;
                         pending = reward;
                         CreateMarker();
                         lastEvent = "Pirate defeated! Salvage is floating nearby.";
                     }
                 }
+                else encounterProcessed = true;
             }
             if (pending != null && marker != null)
             {
@@ -93,6 +98,7 @@ namespace Boatships
             knownSeed = world.Seed;
             economy.UseWorldSeed(knownSeed);
             pending = economy.GetPendingLoot(EnemyLootId);
+            if (leavePersistentWreck && pending != null) economy.PreservePendingWreck(EnemyLootId);
             encounterProcessed = economy.HasLootEntry(EnemyLootId);
             DestroyMarker();
             if (encounterProcessed)

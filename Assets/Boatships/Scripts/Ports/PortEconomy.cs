@@ -33,6 +33,7 @@ namespace Boatships
             public int iron;
             public int rations;
             public int spareCannons;
+            public bool shipwreck;
 
             public string Describe() => "+" + gold + " gold, +" + wood + " wood, +" +
                 iron + " iron, +" + rations + " rations, +" + spareCannons + " cannons";
@@ -50,6 +51,8 @@ namespace Boatships
             public List<string> recruitedOfferKeys = new List<string>();
             public List<LootCache> pendingLoot = new List<LootCache>();
             public List<string> collectedLootIds = new List<string>();
+            public List<LootCache> wrecks = new List<LootCache>();
+            public CampaignProgress campaign = new CampaignProgress();
             public List<MissionContract> missions = new List<MissionContract>();
         }
 
@@ -70,6 +73,7 @@ namespace Boatships
         private SaveState state = new SaveState();
         private int activeSeed = int.MinValue;
         private bool hasActiveSeed;
+        private bool saveLocked;
 
         public int Gold => state.gold;
         public int Wood => state.wood;
@@ -78,6 +82,17 @@ namespace Boatships
         public int SpareCannons => state.spareCannons;
         public IReadOnlyList<CrewMember> Crew => state.crew;
         public int ActiveSeed => activeSeed;
+        public IReadOnlyList<LootCache> Wrecks => state.wrecks;
+        public IReadOnlyList<LootCache> PendingLoot => state.pendingLoot;
+        public CampaignProgress Campaign => state.campaign;
+        public bool CanCheckpoint => hasActiveSeed && !saveLocked;
+        public float TradingDiscount { get; set; }
+        public int BuyPrice(int slot)
+        {
+            int[] prices = { 40, 65, 25, 140 };
+            return slot >= 0 && slot < prices.Length ? Mathf.CeilToInt(prices[slot] *
+                (1f - Mathf.Clamp(TradingDiscount, 0f, 0.2f))) : int.MaxValue;
+        }
         public string LastMessage { get; private set; } = "Welcome to the harbor.";
 
         public void UseWorldSeed(int seed)
@@ -85,22 +100,30 @@ namespace Boatships
             if (hasActiveSeed && activeSeed == seed) return;
             activeSeed = seed;
             hasActiveSeed = true;
+            saveLocked = false;
             state = new SaveState();
             string path = SavePath(seed);
-            if (File.Exists(path))
+            if (BoatshipsSaveStore.Exists(path))
             {
                 try
                 {
-                    SaveState loaded = JsonUtility.FromJson<SaveState>(File.ReadAllText(path));
-                    if (loaded != null) state = loaded;
+                    SaveState loaded = JsonUtility.FromJson<SaveState>(BoatshipsSaveStore.Read(path));
+                    if (loaded == null) throw new InvalidDataException("Invalid port account file.");
+                    state = loaded;
                     if (state.crew == null) state.crew = new List<CrewMember>();
                     if (state.recruitedOfferKeys == null) state.recruitedOfferKeys = new List<string>();
                     if (state.pendingLoot == null) state.pendingLoot = new List<LootCache>();
                     if (state.collectedLootIds == null) state.collectedLootIds = new List<string>();
+                    if (state.wrecks == null) state.wrecks = new List<LootCache>();
+                    if (state.campaign == null) state.campaign = new CampaignProgress();
+                    if (state.campaign.version != 1) throw new InvalidDataException("Unsupported campaign version.");
+                    if (state.campaign.encounters == null) state.campaign.encounters = new List<EncounterRecord>();
+                    if (state.campaign.discovered == null) state.campaign.discovered = new List<Vector2Int>();
                     if (state.missions == null) state.missions = new List<MissionContract>();
                 }
                 catch (Exception ex)
                 {
+                    saveLocked = true;
                     Debug.LogWarning("Boatships port save could not be loaded: " + ex.Message);
                 }
             }
@@ -119,6 +142,7 @@ namespace Boatships
                 case 3: cost = 140; purchased = "1 spare cannon"; break;
                 default: return false;
             }
+            cost = BuyPrice(slot);
             if (state.gold < cost)
             {
                 LastMessage = "Not enough gold. You need " + cost + " gold.";
@@ -305,10 +329,17 @@ namespace Boatships
 
         public bool TryRegisterLoot(LootCache loot)
         {
-            if (loot == null || string.IsNullOrEmpty(loot.id) || HasLootEntry(loot.id)) return false;
+            if (!hasActiveSeed || saveLocked || loot == null || string.IsNullOrEmpty(loot.id) ||
+                HasLootEntry(loot.id)) return false;
             state.pendingLoot.Add(loot);
+            if (loot.shipwreck) state.wrecks.Add(loot);
+            if (!Save())
+            {
+                state.pendingLoot.Remove(loot);
+                if (loot.shipwreck) state.wrecks.Remove(loot);
+                return false;
+            }
             LastMessage = "Pirate defeated: salvage dropped at sea.";
-            Save();
             return true;
         }
 
@@ -319,9 +350,24 @@ namespace Boatships
             return null;
         }
 
+        public void PreservePendingWreck(string lootId)
+        {
+            LootCache pending = GetPendingLoot(lootId);
+            if (pending == null || saveLocked) return;
+            foreach (LootCache wreck in state.wrecks)
+                if (wreck.id == lootId) return;
+            bool previouslyWreck = pending.shipwreck;
+            pending.shipwreck = true;
+            state.wrecks.Add(pending);
+            if (Save()) return;
+            state.wrecks.Remove(pending);
+            pending.shipwreck = previouslyWreck;
+        }
+
         public bool TryCollectLoot(string lootId, out LootCache granted)
         {
             granted = null;
+            if (!hasActiveSeed || saveLocked) return false;
             if (state.collectedLootIds.Contains(lootId)) return false;
             for (int i = 0; i < state.pendingLoot.Count; ++i)
             {
@@ -330,9 +376,15 @@ namespace Boatships
                 ApplyReward(loot, 1);
                 state.collectedLootIds.Add(lootId);
                 state.pendingLoot.RemoveAt(i);
+                if (!Save())
+                {
+                    ApplyReward(loot, -1);
+                    state.collectedLootIds.Remove(lootId);
+                    state.pendingLoot.Insert(i, loot);
+                    return false;
+                }
                 granted = loot;
                 LastMessage = "Salvage recovered: " + loot.Describe() + ".";
-                Save();
                 return true;
             }
             return false;
@@ -387,16 +439,94 @@ namespace Boatships
             state.spareCannons += sign * Mathf.Max(0, reward.spareCannons);
         }
 
+        public bool SaveNow() => Save();
+
+        public bool TryCampaignChange(Action<CampaignProgress> change)
+        {
+            if (!hasActiveSeed || saveLocked) return false;
+            string before = JsonUtility.ToJson(state);
+            change(state.campaign);
+            if (Save()) return true;
+            state = JsonUtility.FromJson<SaveState>(before);
+            return false;
+        }
+
+        public bool TrySpend(int gold, int wood, int iron, Action action)
+        {
+            if (saveLocked || !hasActiveSeed || gold < 0 || wood < 0 || iron < 0 ||
+                state.gold < gold || state.wood < wood || state.iron < iron)
+            {
+                LastMessage = "Insufficient supplies, or account unavailable.";
+                return false;
+            }
+            string before = JsonUtility.ToJson(state);
+            state.gold -= gold; state.wood -= wood; state.iron -= iron;
+            try { action(); if (Save()) return true; }
+            catch (Exception ex) { Debug.LogWarning("Purchase failed: " + ex.Message); }
+            state = JsonUtility.FromJson<SaveState>(before);
+            return false;
+        }
+
+        public bool ClaimCampaignContract(LootCache reward)
+        {
+            if (!CanCheckpoint || !state.campaign.contractAccepted) return false;
+            string before = JsonUtility.ToJson(state);
+            state.campaign.contractAccepted = false;
+            state.campaign.cargoLoaded = false;
+            state.campaign.contractStep++;
+            state.campaign.reputation += 10;
+            ApplyReward(reward, 1);
+            if (Save()) return true;
+            state = JsonUtility.FromJson<SaveState>(before);
+            return false;
+        }
+
+        public bool ResolveEncounter(string encounterId, bool captured, Vector3 position)
+        {
+            EncounterRecord encounter = state.campaign.encounters.Find(item => item.id == encounterId);
+            if (saveLocked || encounter == null || encounter.defeated || encounter.captured) return false;
+            string before = JsonUtility.ToJson(state);
+            encounter.defeated = !captured;
+            encounter.captured = captured;
+            if (!captured) { encounter.damage.Clear(); encounter.flooding = null; }
+            encounter.position = position;
+            state.campaign.victories++;
+            state.campaign.reputation += captured ? 5 : 2;
+            if (captured) state.campaign.captures++;
+            LootCache reward = new LootCache { id = encounterId, x = position.x, z = position.z,
+                gold = 45 + encounter.tier * 30, wood = 3 + encounter.tier,
+                iron = encounter.tier, rations = 2, spareCannons = encounter.tier >= 3 ? 1 : 0,
+                shipwreck = !captured };
+            state.pendingLoot.Add(reward);
+            if (!captured) state.wrecks.Add(reward);
+            if (Save()) return true;
+            state = JsonUtility.FromJson<SaveState>(before);
+            return false;
+        }
+
+        public bool LoseCapturedVessel(string encounterId, Vector3 position)
+        {
+            EncounterRecord record = state.campaign.encounters.Find(item => item.id == encounterId);
+            if (record == null || !record.captured || saveLocked) return false;
+            string before = JsonUtility.ToJson(state);
+            record.captured = false; record.defeated = true;
+            record.damage.Clear();
+            record.flooding = null;
+            var salvage = new LootCache { id = encounterId + "_fleetloss", x = position.x, z = position.z,
+                shipwreck = true, wood = 2, iron = 1 };
+            state.pendingLoot.Add(salvage); state.wrecks.Add(salvage);
+            if (Save()) return true;
+            state = JsonUtility.FromJson<SaveState>(before);
+            return false;
+        }
+
         private bool Save()
         {
-            if (!hasActiveSeed) return false;
+            if (!hasActiveSeed || saveLocked) return false;
             string path = SavePath(activeSeed);
-            string temporary = path + ".tmp";
             try
             {
-                File.WriteAllText(temporary, JsonUtility.ToJson(state, true));
-                if (File.Exists(path)) File.Replace(temporary, path, null);
-                else File.Move(temporary, path);
+                BoatshipsSaveStore.Write(path, JsonUtility.ToJson(state, true));
                 return true;
             }
             catch (Exception ex)

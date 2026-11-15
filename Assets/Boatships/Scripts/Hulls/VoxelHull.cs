@@ -14,6 +14,11 @@ namespace Boatships
     {
         [SerializeField] private HullDefinition definition;
         private float[,,] health;
+        private bool[,,] design;
+        [SerializeField] private bool structuralIntegrity;
+        public event System.Action HullChanged;
+        public int Revision { get; private set; }
+        public float HullHealthMultiplier { get; set; } = 1f;
         private Mesh generatedMesh;
         private int initialBlocks;
         private int activeBlocks;
@@ -47,17 +52,114 @@ namespace Boatships
         {
             if (definition == null) return;
             health = new float[definition.Width, definition.Height, definition.Length];
+            bool preserve = structuralIntegrity && design != null && design.GetLength(0) == definition.Width &&
+                design.GetLength(1) == definition.Height && design.GetLength(2) == definition.Length;
+            if (!preserve) design = new bool[definition.Width, definition.Height, definition.Length];
             initialBlocks = 0;
             for (int x = 0; x < definition.Width; ++x)
             for (int y = 0; y < definition.Height; ++y)
             for (int z = 0; z < definition.Length; ++z)
             {
-                if (!definition.ContainsBlock(x, y, z)) continue;
+                if (!(preserve ? design[x, y, z] : definition.ContainsBlock(x, y, z))) continue;
                 health[x, y, z] = definition.BlockHealth;
+                design[x, y, z] = true;
                 initialBlocks++;
             }
             activeBlocks = initialBlocks;
+            if (structuralIntegrity) RemoveDisconnectedSections();
             RebuildMesh();
+        }
+
+        public void EnableStructuralIntegrity() => structuralIntegrity = true;
+        public void ResetDesign() { design = null; ResetHull(); }
+
+        public bool InBounds(int x, int y, int z) => definition != null && x >= 0 && y >= 0 && z >= 0 &&
+            x < definition.Width && y < definition.Height && z < definition.Length;
+
+        public bool IsDesignedCell(int x, int y, int z) => design != null && InBounds(x, y, z) && design[x, y, z];
+
+        public bool TryNearestDeckPoint(Vector3 requested, out Vector3 point)
+        {
+            point = Vector3.zero;
+            if (definition == null || health == null) return false;
+            float best = float.PositiveInfinity;
+            for (int x = 0; x < definition.Width; x++)
+            for (int z = 0; z < definition.Length; z++)
+            {
+                if (!HasBlock(x, definition.Height - 1, z)) continue;
+                Vector3 candidate = definition.BlockCenter(x, definition.Height - 1, z) +
+                    Vector3.up * (definition.BlockSize * 0.5f + 0.1f);
+                float distance = (candidate - requested).sqrMagnitude;
+                if (distance >= best) continue;
+                best = distance; point = candidate;
+            }
+            return best < float.PositiveInfinity;
+        }
+
+        public bool CanEditCell(int x, int y, int z, bool add)
+        {
+            if (health == null || !InBounds(x, y, z)) return false;
+            if (!add) return HasBlock(x, y, z) && activeBlocks > 1;
+            if (HasBlock(x, y, z)) return false;
+            return activeBlocks == 0 || HasBlock(x + 1, y, z) || HasBlock(x - 1, y, z) ||
+                HasBlock(x, y + 1, z) || HasBlock(x, y - 1, z) ||
+                HasBlock(x, y, z + 1) || HasBlock(x, y, z - 1);
+        }
+
+        public bool TryEditCell(int x, int y, int z, bool add)
+        {
+            if (!CanEditCell(x, y, z, add)) return false;
+            if (design[x, y, z] != add) initialBlocks += add ? 1 : -1;
+            design[x, y, z] = add;
+            health[x, y, z] = add ? definition.BlockHealth : 0f;
+            activeBlocks += add ? 1 : -1;
+            if (structuralIntegrity) RemoveDisconnectedSections();
+            RebuildMesh();
+            return true;
+        }
+
+        private void RemoveDisconnectedSections()
+        {
+            var visited = new HashSet<Vector3Int>();
+            var largest = new List<Vector3Int>();
+            var section = new List<Vector3Int>();
+            var queue = new Queue<Vector3Int>();
+            Vector3Int[] offsets = { Vector3Int.right, Vector3Int.left, Vector3Int.up,
+                Vector3Int.down, new Vector3Int(0, 0, 1), new Vector3Int(0, 0, -1) };
+            for (int x = 0; x < definition.Width; x++)
+            for (int y = 0; y < definition.Height; y++)
+            for (int z = 0; z < definition.Length; z++)
+            {
+                var start = new Vector3Int(x, y, z);
+                if (!HasBlock(x, y, z) || !visited.Add(start)) continue;
+                section.Clear();
+                queue.Enqueue(start);
+                while (queue.Count > 0)
+                {
+                    Vector3Int cell = queue.Dequeue();
+                    section.Add(cell);
+                    foreach (Vector3Int offset in offsets)
+                    {
+                        Vector3Int next = cell + offset;
+                        if (HasBlock(next.x, next.y, next.z) && visited.Add(next)) queue.Enqueue(next);
+                    }
+                }
+                if (section.Count > largest.Count) largest = new List<Vector3Int>(section);
+            }
+            var retained = new HashSet<Vector3Int>(largest);
+            foreach (Vector3Int cell in visited)
+                if (!retained.Contains(cell)) { health[cell.x, cell.y, cell.z] = 0f; activeBlocks--; }
+        }
+
+        public Vector3 LiveCenterOfMass()
+        {
+            Vector3 sum = Vector3.zero;
+            if (health == null || activeBlocks == 0) return sum;
+            for (int x = 0; x < definition.Width; x++)
+            for (int y = 0; y < definition.Height; y++)
+            for (int z = 0; z < definition.Length; z++)
+                if (HasBlock(x, y, z)) sum += definition.BlockCenter(x, y, z);
+            return sum / activeBlocks;
         }
 
         public bool HasBlock(int x, int y, int z)
@@ -102,7 +204,7 @@ namespace Boatships
                 float distance = Vector3.Distance(definition.BlockCenter(x, y, z), nearest);
                 if (distance > effectiveRadius) continue;
                 float falloff = Mathf.Lerp(1f, 0.45f, distance / effectiveRadius);
-                health[x, y, z] -= damage * falloff;
+                health[x, y, z] -= damage * falloff / Mathf.Max(1f, HullHealthMultiplier);
                 hitAny = true;
                 if (health[x, y, z] > 0f) continue;
                 health[x, y, z] = 0f;
@@ -110,7 +212,11 @@ namespace Boatships
                 removedAny = true;
             }
 
-            if (removedAny) RebuildMesh();
+            if (removedAny)
+            {
+                if (structuralIntegrity) RemoveDisconnectedSections();
+                RebuildMesh();
+            }
             return hitAny;
         }
 
@@ -122,28 +228,38 @@ namespace Boatships
             for (int y = 0; y < definition.Height; ++y)
             for (int z = 0; z < definition.Length; ++z)
             {
-                if (!definition.ContainsBlock(x, y, z)) continue;
-                if (health[x, y, z] >= definition.BlockHealth - 0.001f) continue;
-                damaged.Add(new ShipVoxelRecord { x = x, y = y, z = z, health = health[x, y, z] });
+                bool original = definition.ContainsBlock(x, y, z);
+                if (!original && !design[x, y, z]) continue;
+                if (original && design[x, y, z] && health[x, y, z] >= definition.BlockHealth - 0.001f) continue;
+                damaged.Add(new ShipVoxelRecord { x = x, y = y, z = z, health = health[x, y, z],
+                    removedFromDesign = !design[x, y, z], addedToDesign = !original && design[x, y, z] });
             }
             return damaged;
         }
 
         /// <summary>Restores destroyed AND partially damaged voxels from a sparse snapshot.</summary>
-        public void RestoreVoxelDamage(List<ShipVoxelRecord> snapshot)
+        public void RestoreVoxelDamage(List<ShipVoxelRecord> snapshot, bool pristine = false)
         {
-            ResetHull();
+            ResetDesign();
             if (definition == null || health == null || snapshot == null) return;
             var seen = new HashSet<int>();
             foreach (ShipVoxelRecord cell in snapshot)
             {
-                if (cell == null || !definition.ContainsBlock(cell.x, cell.y, cell.z)) continue;
+                if (cell == null || !InBounds(cell.x, cell.y, cell.z)) continue;
                 int key = (cell.x * definition.Height + cell.y) * definition.Length + cell.z;
                 if (!seen.Add(key)) continue;
+                bool planned = cell.addedToDesign || definition.ContainsBlock(cell.x, cell.y, cell.z);
+                planned &= !cell.removedFromDesign;
+                bool previouslyLive = HasBlock(cell.x, cell.y, cell.z);
+                if (design[cell.x, cell.y, cell.z] != planned) initialBlocks += planned ? 1 : -1;
+                design[cell.x, cell.y, cell.z] = planned;
                 float value = Mathf.Clamp(cell.health, 0f, definition.BlockHealth);
-                if (value <= 0f) activeBlocks--;
+                if (pristine && planned) value = definition.BlockHealth;
+                if (!planned) value = 0f;
+                if (previouslyLive != (value > 0f)) activeBlocks += value > 0f ? 1 : -1;
                 health[cell.x, cell.y, cell.z] = value;
             }
+            if (structuralIntegrity) RemoveDisconnectedSections();
             RebuildMesh();
         }
 
@@ -193,11 +309,15 @@ namespace Boatships
             }
 
             generatedMesh.Clear();
+            generatedMesh.indexFormat = vertices.Count > 65535 ? UnityEngine.Rendering.IndexFormat.UInt32 :
+                UnityEngine.Rendering.IndexFormat.UInt16;
             generatedMesh.SetVertices(vertices);
             generatedMesh.SetTriangles(triangles, 0);
             generatedMesh.SetUVs(0, uvs);
             generatedMesh.RecalculateNormals();
             generatedMesh.RecalculateBounds();
+            Revision++;
+            HullChanged?.Invoke();
         }
 
         private void AddFace(Vector3 a, Vector3 b, Vector3 c, Vector3 d)

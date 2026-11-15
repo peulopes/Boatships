@@ -32,6 +32,8 @@ namespace Boatships
 
         public string Status => status;
         public int LoadedSeed => loadedSeed;
+        public bool CanCheckpoint => ready && !saveLocked;
+        public bool LastSaveSucceeded { get; private set; }
         public string SaveFilePath => loadedSeed == int.MinValue ? "Not initialized" : PathFor(loadedSeed);
         public int InstalledPartCount => shipyard != null ? shipyard.InstalledCount : 0;
 
@@ -90,7 +92,7 @@ namespace Boatships
 
         private void ResetToStarter()
         {
-            hull.ResetHull();
+            hull.ResetDesign();
             if (flooding != null) flooding.RestoreFlooding(null);
             shipyard.RestoreEquipment(defaultEquipment);
             if (weapons != null) weapons.RestoreWeaponGroups(null);
@@ -119,6 +121,7 @@ namespace Boatships
 
         public void SaveShip()
         {
+            LastSaveSucceeded = false;
             if (!ready)
             {
                 Debug.LogWarning("Boatships M11: Save requested before initialization.", this);
@@ -134,25 +137,17 @@ namespace Boatships
             {
                 ShipSaveRecord data = Capture(loadedSeed);
                 string path = PathFor(loadedSeed);
-                string temp = path + ".tmp";
-                string backup = path + ".bak";
                 string json = JsonUtility.ToJson(data, true);
                 // Guard against accidentally saving only starter parts or a non-serializable record.
                 ShipSaveRecord validation = JsonUtility.FromJson<ShipSaveRecord>(json);
                 if (validation == null || validation.installedEquipment == null ||
                     validation.installedEquipment.Count != data.installedEquipment.Count)
                     throw new InvalidDataException("Equipment serialization was incomplete.");
-                File.WriteAllText(temp, json);
-                if (File.Exists(path))
-                {
-                    try { File.Replace(temp, path, backup); }
-                    catch (NotSupportedException) { BackupAndCopy(temp, path, backup); }
-                    catch (IOException) { BackupAndCopy(temp, path, backup); }
-                }
-                else File.Move(temp, path);
+                BoatshipsSaveStore.Write(path, json);
+                LastSaveSucceeded = true;
                 status = "SAVED " + data.installedEquipment.Count + " parts, " +
                     data.damagedVoxels.Count + " damaged voxels (seed " + loadedSeed + ").";
-                Debug.Log("Boatships M11: " + status + " File: " + path, this);
+                if (!BoatshipsSaveStore.Enabled) Debug.Log("Boatships M11: " + status + " File: " + path, this);
             }
             catch (Exception e)
             {
@@ -161,22 +156,15 @@ namespace Boatships
             }
         }
 
-        private static void BackupAndCopy(string temp, string target, string backup)
-        {
-            if (File.Exists(target)) File.Copy(target, backup, true);
-            File.Copy(temp, target, true);
-            File.Delete(temp);
-        }
-
         public void LoadShip()
         {
             if (!ready) return;
             string path = PathFor(loadedSeed);
-            if (!File.Exists(path) && !File.Exists(path + ".bak"))
+            if (!BoatshipsSaveStore.Exists(path) && !BoatshipsSaveStore.Exists(path + ".bak"))
             {
                 status = "NEW WORLD: no ship file for seed " + loadedSeed +
                     ". Starter layout has " + shipyard.InstalledCount + " parts. Press F5 to save.";
-                Debug.Log("Boatships M11: " + status + " File: " + path, this);
+                if (!BoatshipsSaveStore.Enabled) Debug.Log("Boatships M11: " + status + " File: " + path, this);
                 return;
             }
             ShipSaveRecord saved = Read(path) ?? Read(path + ".bak");
@@ -199,7 +187,7 @@ namespace Boatships
             int expectedParts = saved.installedEquipment != null ? saved.installedEquipment.Count : 0;
             try
             {
-            hull.ResetHull();
+            hull.RestoreVoxelDamage(saved.damagedVoxels, true);
             if (flooding != null) flooding.RestoreFlooding(null);
             shipyard.RestoreEquipment(saved.installedEquipment);
             if (weapons != null) weapons.RestoreWeaponGroups(saved.weaponGroups);
@@ -224,7 +212,7 @@ namespace Boatships
             {
                 status = "RESTORED " + restoredParts + "/" + expectedParts +
                     " parts, seed " + loadedSeed + ".";
-                Debug.Log("Boatships M11: " + status + " File: " + path, this);
+                if (!BoatshipsSaveStore.Enabled) Debug.Log("Boatships M11: " + status + " File: " + path, this);
             }
             }
             catch (Exception ex)
@@ -237,8 +225,8 @@ namespace Boatships
 
         private static ShipSaveRecord Read(string path)
         {
-            if (!File.Exists(path)) return null;
-            try { return JsonUtility.FromJson<ShipSaveRecord>(File.ReadAllText(path)); }
+            if (!BoatshipsSaveStore.Exists(path)) return null;
+            try { return JsonUtility.FromJson<ShipSaveRecord>(BoatshipsSaveStore.Read(path)); }
             catch (Exception e)
             {
                 Debug.LogWarning("Boatships M11: Invalid ship file " + path + ": " + e.Message);

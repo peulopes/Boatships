@@ -150,10 +150,10 @@ namespace Boatships
             {
                 if (detailText != null)
                     detailText.text = "STORE — Purchase provisions and ship supplies. Purchased spare cannons can be installed in the shipyard. Other equipment uses wood/iron.";
-                SetAction(0, "Buy 5 Wood — 40 gold", economy.Gold >= 40);
-                SetAction(1, "Buy 3 Iron — 65 gold", economy.Gold >= 65);
-                SetAction(2, "Buy 5 Rations — 25 gold", economy.Gold >= 25);
-                SetAction(3, "Buy 1 Spare Cannon — 140 gold", economy.Gold >= 140);
+                SetAction(0, "Buy 5 Wood — " + economy.BuyPrice(0) + " gold", economy.Gold >= economy.BuyPrice(0));
+                SetAction(1, "Buy 3 Iron — " + economy.BuyPrice(1) + " gold", economy.Gold >= economy.BuyPrice(1));
+                SetAction(2, "Buy 5 Rations — " + economy.BuyPrice(2) + " gold", economy.Gold >= economy.BuyPrice(2));
+                SetAction(3, "Buy 1 Spare Cannon — " + economy.BuyPrice(3) + " gold", economy.Gold >= economy.BuyPrice(3));
             }
             else if (tab == Tab.Tavern)
             {

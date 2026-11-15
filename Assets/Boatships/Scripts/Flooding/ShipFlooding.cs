@@ -36,6 +36,7 @@ namespace Boatships
         [SerializeField, Range(0, 10)] private int initialRepairKits = 3;
 
         private readonly float[] compartments = new float[6];
+        private readonly float[] inflow = new float[6];
         private readonly List<Opening> openings = new List<Opening>();
         private readonly HashSet<int> patches = new HashSet<int>();
         private Collider[] rootColliders;
@@ -110,7 +111,7 @@ namespace Boatships
                 return;
             }
 
-            float[] inflow = new float[6];
+            System.Array.Clear(inflow, 0, inflow.Length);
             submergedOpenings = 0;
             float halfBlock = hull.Definition.BlockSize * 0.5f;
             foreach (Opening hole in openings)
@@ -145,12 +146,12 @@ namespace Boatships
             for (int y = 0; y < def.Height; ++y)
             for (int z = 0; z < def.Length; ++z)
             {
-                if (!def.ContainsBlock(x, y, z) || hull.HasBlock(x, y, z)) continue;
+                if (!hull.IsDesignedCell(x, y, z) || hull.HasBlock(x, y, z)) continue;
                 // Only destroyed originally OUTSIDE hull cells count as breaches.
                 // The deck is intentionally excluded; bottom and four sides count.
                 bool outer = y == 0 ||
-                    !def.ContainsBlock(x - 1, y, z) || !def.ContainsBlock(x + 1, y, z) ||
-                    !def.ContainsBlock(x, y, z - 1) || !def.ContainsBlock(x, y, z + 1);
+                    !hull.IsDesignedCell(x - 1, y, z) || !hull.IsDesignedCell(x + 1, y, z) ||
+                    !hull.IsDesignedCell(x, y, z - 1) || !hull.IsDesignedCell(x, y, z + 1);
                 if (!outer) continue;
                 int side = x < def.Width / 2 ? 0 : 1; // 0 port, 1 starboard
                 int section = Mathf.Min(2, 3 * z / def.Length); // stern, middle, bow
