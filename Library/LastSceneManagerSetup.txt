@@ -1,5 +1,5 @@
 sceneSetups:
-- path: Assets/Boatships/Scenes/Boatships_InventoryLootPrototype.unity
+- path: Assets/Boatships/Scenes/Boatships_M12_CrewManagement.unity
   isLoaded: 1
   isActive: 1
   isSubScene: 0

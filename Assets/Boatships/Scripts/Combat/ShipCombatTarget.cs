@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 
 namespace Boatships
@@ -8,6 +9,9 @@ namespace Boatships
     {
         [SerializeField] private VoxelHull hull;
         [SerializeField] private bool isPracticeTarget;
+
+        // M13 additive event fired only after a valid hull impact.
+        public event Action<Vector3, float> HullImpactReceived;
 
         public VoxelHull Hull => hull;
         public bool IsPracticeTarget => isPracticeTarget;
@@ -28,7 +32,9 @@ namespace Boatships
         public bool ReceiveImpact(Vector3 worldPoint, float damage, float radius)
         {
             if (hull == null) return false;
-            return hull.ApplyImpactWorld(worldPoint, damage, radius);
+            bool hit = hull.ApplyImpactWorld(worldPoint, damage, radius);
+            if (hit) HullImpactReceived?.Invoke(worldPoint, damage);
+            return hit;
         }
 
         public void ResetPracticeTarget()

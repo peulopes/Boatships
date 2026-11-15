@@ -10,9 +10,14 @@ namespace Boatships
     [DisallowMultipleComponent]
     public sealed class PortDemoUI : MonoBehaviour
     {
-        private enum Tab { Store, Tavern, Repairs }
+        private enum Tab { Store, Tavern, Repairs, Missions }
         [SerializeField] private PortDocking docking;
         [SerializeField] private PortEconomy economy;
+        [SerializeField] private PortMissions missions;
+        [SerializeField] private Text missionTracker;
+        [SerializeField] private Button jumpToMission;
+        private int missionSlot;
+        private string missionMessage;
         private Tab tab;
         private GameObject vicinityPanel;
         private GameObject overlay;
@@ -33,6 +38,13 @@ namespace Boatships
             economy = portEconomy;
         }
 
+        public void BindMissions(PortMissions board, Text tracker, Button jump)
+        {
+            missions = board;
+            missionTracker = tracker;
+            jumpToMission = jump;
+        }
+
         private void Start()
         {
             vicinityPanel = Find("VicinityPanel");
@@ -48,6 +60,16 @@ namespace Boatships
             Bind("PortOverlay/Content/TabRow/TabStore", () => { tab = Tab.Store; Refresh(true); });
             Bind("PortOverlay/Content/TabRow/TabTavern", () => { tab = Tab.Tavern; Refresh(true); });
             Bind("PortOverlay/Content/TabRow/TabRepair", () => { tab = Tab.Repairs; Refresh(true); });
+            if (missions != null)
+            {
+                Bind("PortOverlay/Content/TabRow/TabMissions", () =>
+                {
+                    tab = Tab.Missions;
+                    missionMessage = null;
+                    Refresh(true);
+                });
+                jumpToMission.onClick.AddListener(missions.JumpToObjectiveForTesting);
+            }
             Bind("PortOverlay/Content/FooterRow/OpenShipyard", () => docking.OpenShipyard());
             Bind("PortOverlay/Content/FooterRow/DepartButton", () => docking.Undock());
             Bind("ShipyardReturnPanel/BackButton", () => docking.ReturnToPort());
@@ -99,6 +121,12 @@ namespace Boatships
             SetVisible(vicinityPanel, !docked);
             SetVisible(overlay, docked && !shipyard);
             SetVisible(shipyardReturn, shipyard);
+            if (missions != null)
+            {
+                SetVisible(missionTracker.transform.parent.gameObject, missions.ShowTracker);
+                if (missions.ShowTracker) missionTracker.text = missions.TrackerText();
+                jumpToMission.interactable = missions.HasTrackedMission;
+            }
             if (vicinityPanel != null && nearbyText != null)
             {
                 string name = docking.HasPort ?
@@ -116,7 +144,8 @@ namespace Boatships
                     "  |  Spare cannons " + economy.SpareCannons + "  |  Crew " + economy.Crew.Count;
             if (messageText != null) messageText.text = docking.Status + "\n" + economy.LastMessage;
             for (int i = 0; i < actionButtons.Length; ++i)
-                if (actionButtons[i] != null) actionButtons[i].gameObject.SetActive(tab == Tab.Store || i <= (tab == Tab.Tavern ? 2 : 0));
+                if (actionButtons[i] != null) actionButtons[i].gameObject.SetActive(
+                    tab == Tab.Store || tab == Tab.Missions || i <= (tab == Tab.Tavern ? 2 : 0));
             if (tab == Tab.Store)
             {
                 if (detailText != null)
@@ -148,6 +177,17 @@ namespace Boatships
                         " — " + offer.Cost + " gold", !hired && economy.Gold >= offer.Cost);
                 }
             }
+            else if (tab == Tab.Missions)
+            {
+                detailText.text = missions.Describe(missionSlot);
+                if (!string.IsNullOrEmpty(missionMessage))
+                    messageText.text = missionMessage + "\n" + economy.LastMessage;
+                SetAction(0, "Pirate Hunt", missionSlot != 0);
+                SetAction(1, "Island Survey", missionSlot != 1);
+                SetAction(2, "Cargo Delivery", missionSlot != 2);
+                bool canAct = missions.GetAction(missionSlot, out string label);
+                SetAction(3, label, canAct);
+            }
             else
             {
                 int gold = economy.RepairGoldCost(docking.Hull, docking.Flooding);
@@ -177,6 +217,14 @@ namespace Boatships
             {
                 case Tab.Store: economy.Buy(index); break;
                 case Tab.Tavern: economy.Recruit(docking.DockedPort, index); break;
+                case Tab.Missions:
+                    if (index < PortMissions.ContractCount)
+                    {
+                        missionSlot = index;
+                        missionMessage = null;
+                    }
+                    else missionMessage = missions.TakeAction(missionSlot);
+                    break;
                 case Tab.Repairs:
                     if (index == 0) economy.RepairShip(docking.Hull, docking.Flooding);
                     break;

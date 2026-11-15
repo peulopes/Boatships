@@ -7,7 +7,7 @@ namespace Boatships
 {
     /// <summary>
     /// Small persistent single-player economy for the port prototype.
-    /// Only gold/supplies/crew are saved; this is NOT yet a full ship/world save system.
+    /// Stores supplies, crew, salvage, and missions in a per-seed account.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class PortEconomy : MonoBehaviour
@@ -50,6 +50,7 @@ namespace Boatships
             public List<string> recruitedOfferKeys = new List<string>();
             public List<LootCache> pendingLoot = new List<LootCache>();
             public List<string> collectedLootIds = new List<string>();
+            public List<MissionContract> missions = new List<MissionContract>();
         }
 
         public struct CrewOffer
@@ -68,6 +69,7 @@ namespace Boatships
 
         private SaveState state = new SaveState();
         private int activeSeed = int.MinValue;
+        private bool hasActiveSeed;
 
         public int Gold => state.gold;
         public int Wood => state.wood;
@@ -80,8 +82,9 @@ namespace Boatships
 
         public void UseWorldSeed(int seed)
         {
-            if (activeSeed == seed) return;
+            if (hasActiveSeed && activeSeed == seed) return;
             activeSeed = seed;
+            hasActiveSeed = true;
             state = new SaveState();
             string path = SavePath(seed);
             if (File.Exists(path))
@@ -94,6 +97,7 @@ namespace Boatships
                     if (state.recruitedOfferKeys == null) state.recruitedOfferKeys = new List<string>();
                     if (state.pendingLoot == null) state.pendingLoot = new List<LootCache>();
                     if (state.collectedLootIds == null) state.collectedLootIds = new List<string>();
+                    if (state.missions == null) state.missions = new List<MissionContract>();
                 }
                 catch (Exception ex)
                 {
@@ -323,11 +327,7 @@ namespace Boatships
             {
                 LootCache loot = state.pendingLoot[i];
                 if (loot.id != lootId) continue;
-                state.gold += Mathf.Max(0, loot.gold);
-                state.wood += Mathf.Max(0, loot.wood);
-                state.iron += Mathf.Max(0, loot.iron);
-                state.rations += Mathf.Max(0, loot.rations);
-                state.spareCannons += Mathf.Max(0, loot.spareCannons);
+                ApplyReward(loot, 1);
                 state.collectedLootIds.Add(lootId);
                 state.pendingLoot.RemoveAt(i);
                 granted = loot;
@@ -345,17 +345,65 @@ namespace Boatships
             Save();
         }
 
-        private void Save()
+        internal IReadOnlyList<MissionContract> Missions => state.missions;
+
+        internal bool AcceptMission(MissionContract mission)
         {
-            if (activeSeed == int.MinValue) return;
+            state.missions.Add(mission);
+            if (Save()) return true;
+            state.missions.Remove(mission);
+            return false;
+        }
+
+        internal bool MarkMissionReady(MissionContract mission)
+        {
+            mission.stage = MissionStage.Ready;
+            if (Save()) return true;
+            mission.stage = MissionStage.Active;
+            return false;
+        }
+
+        internal bool ClaimMission(MissionContract mission, LootCache reward)
+        {
+            if (mission.stage != MissionStage.Ready) return false;
+            mission.stage = MissionStage.Claimed;
+            ApplyReward(reward, 1);
+            if (Save())
+            {
+                LastMessage = "Contract paid: " + reward.Describe() + ".";
+                return true;
+            }
+            ApplyReward(reward, -1);
+            mission.stage = MissionStage.Ready;
+            return false;
+        }
+
+        private void ApplyReward(LootCache reward, int sign)
+        {
+            state.gold += sign * Mathf.Max(0, reward.gold);
+            state.wood += sign * Mathf.Max(0, reward.wood);
+            state.iron += sign * Mathf.Max(0, reward.iron);
+            state.rations += sign * Mathf.Max(0, reward.rations);
+            state.spareCannons += sign * Mathf.Max(0, reward.spareCannons);
+        }
+
+        private bool Save()
+        {
+            if (!hasActiveSeed) return false;
+            string path = SavePath(activeSeed);
+            string temporary = path + ".tmp";
             try
             {
-                File.WriteAllText(SavePath(activeSeed), JsonUtility.ToJson(state, true));
+                File.WriteAllText(temporary, JsonUtility.ToJson(state, true));
+                if (File.Exists(path)) File.Replace(temporary, path, null);
+                else File.Move(temporary, path);
+                return true;
             }
             catch (Exception ex)
             {
                 Debug.LogWarning("Boatships port save failed: " + ex.Message);
-                LastMessage = "Action completed, but could not save: " + ex.Message;
+                LastMessage = "Could not save the port account: " + ex.Message;
+                return false;
             }
         }
 

@@ -6,6 +6,9 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
+    path: Assets/Boatships/Scenes/Boatships_PortsPrototype 1.unity
+    guid: ea73f5f388239df44bd545445051836b
+  - enabled: 1
     path: Assets/Boatships/Scenes/Boatships_InventoryLootPrototype.unity
     guid: 77b2b6f95aefca54fa1360f16babee5e
   - enabled: 1

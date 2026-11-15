@@ -21,6 +21,7 @@ namespace Boatships
             public string hardpointId;
             [NonSerialized] public GameObject instance;
             public bool paidFromInventory;
+            public string persistentId;
         }
 
         [SerializeField] private VoxelHull hull;
@@ -29,6 +30,7 @@ namespace Boatships
         [SerializeField] private PortEconomy inventory;
         [SerializeField] private PortDocking inventoryDock;
         private bool chargeForNewPlacements;
+        private bool restoringPlacements;
         [Header("Demo equipment")]
         [SerializeField] private ShipEquipmentDefinition cannon;
         [SerializeField] private ShipEquipmentDefinition storage;
@@ -66,7 +68,7 @@ namespace Boatships
             inventoryDock = port;
         }
 
-        private bool AuthorizedToBuild => !chargeForNewPlacements ||
+        private bool AuthorizedToBuild => restoringPlacements || !chargeForNewPlacements ||
             (inventoryDock != null && inventoryDock.IsDocked && inventoryDock.ViewingShipyard);
         public float EquipmentMass
         {
@@ -153,6 +155,80 @@ namespace Boatships
                 Status = "Selected " + definition.DisplayName + ". Tap deck to place (R rotates).";
         }
 
+        /// <summary>Stable, save-friendly shipyard layout. Never serializes scene references.</summary>
+        public List<ShipEquipmentRecord> CaptureEquipment()
+        {
+            var records = new List<ShipEquipmentRecord>(installed.Count);
+            foreach (Placement p in installed)
+            {
+                if (p.definition == null) continue;
+                if (string.IsNullOrEmpty(p.persistentId)) p.persistentId = Guid.NewGuid().ToString("N");
+                records.Add(new ShipEquipmentRecord
+                {
+                    instanceKey = p.persistentId, itemId = p.definition.ItemId,
+                    x = p.x, z = p.z, rotationSteps = p.rotationSteps,
+                    hardpointId = p.hardpointId, paidFromInventory = p.paidFromInventory
+                });
+            }
+            return records;
+        }
+
+        public string GetPersistentId(Transform root)
+        {
+            foreach (Placement p in installed)
+                if (p.instance != null && p.instance.transform == root)
+                {
+                    if (string.IsNullOrEmpty(p.persistentId)) p.persistentId = Guid.NewGuid().ToString("N");
+                    return p.persistentId;
+                }
+            return null;
+        }
+
+        public Transform FindEquipmentByPersistentId(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return null;
+            foreach (Placement p in installed)
+                if (p.persistentId == key && p.instance != null) return p.instance.transform;
+            return null;
+        }
+
+        private ShipEquipmentDefinition FindDefinition(string id)
+        {
+            ShipEquipmentDefinition[] all = { cannon, storage, armor, cabin, mast, rudder };
+            foreach (ShipEquipmentDefinition def in all)
+                if (def != null && def.ItemId == id) return def;
+            return null;
+        }
+
+        /// <summary>Restoration never charges gold/materials or refunds existing equipment.</summary>
+        public void RestoreEquipment(List<ShipEquipmentRecord> data)
+        {
+            if (hull == null || hull.Definition == null) return;
+            restoringPlacements = true;
+            try
+            {
+                for (int i = installed.Count - 1; i >= 0; --i) RemoveIndex(i, false);
+                if (data == null) return;
+                // Place hardpoints first so the normal mast clearance rule remains effective.
+                for (int pass = 0; pass < 2; ++pass)
+                foreach (ShipEquipmentRecord item in data)
+                {
+                    if (item == null) continue;
+                    ShipEquipmentDefinition def = FindDefinition(item.itemId);
+                    if (def == null) { Debug.LogWarning("Boatships M11: Missing equipment definition " + item.itemId); continue; }
+                    bool hardpoint = def.Placement == ShipPlacementKind.Hardpoint;
+                    if (hardpoint != (pass == 0)) continue;
+                    bool ok = hardpoint ? TryInstallHardpoint(def, item.hardpointId) :
+                        TryInstallDeck(def, item.x, item.z, item.rotationSteps);
+                    if (!ok) { Debug.LogWarning("Boatships M11: Skipped invalid placement: " + item.itemId); continue; }
+                    Placement p = installed[installed.Count - 1];
+                    p.persistentId = string.IsNullOrEmpty(item.instanceKey) ? Guid.NewGuid().ToString("N") : item.instanceKey;
+                    p.paidFromInventory = item.paidFromInventory;
+                }
+            }
+            finally { restoringPlacements = false; }
+        }
+
         public void SelectRemoval()
         {
             if (!InShipyard) SetShipyard(true);
@@ -185,7 +261,7 @@ namespace Boatships
             int l = LengthOf(definition, quarterTurns);
             if (!CanPlaceDeck(x, z, w, l)) return false;
 
-            bool paid = chargeForNewPlacements && inventory != null;
+            bool paid = !restoringPlacements && chargeForNewPlacements && inventory != null;
             if (paid && !inventory.TryConsumeEquipment(definition.Kind))
             {
                 Status = inventory.LastMessage;
@@ -194,7 +270,8 @@ namespace Boatships
             var newPlacement = new Placement
             {
                 definition = definition, x = x, z = z,
-                rotationSteps = quarterTurns % 4, paidFromInventory = paid
+                rotationSteps = quarterTurns % 4, paidFromInventory = paid,
+                persistentId = Guid.NewGuid().ToString("N")
             };
             Vector3 localPosition = DeckOrigin(x, z, w, l);
             newPlacement.instance = MakeEquipment(definition, localPosition, quarterTurns);
@@ -219,14 +296,15 @@ namespace Boatships
             foreach (Placement p in installed)
                 if (p.hardpointId == socketId) return false;
 
-            bool paid = chargeForNewPlacements && inventory != null;
+            bool paid = !restoringPlacements && chargeForNewPlacements && inventory != null;
             if (paid && !inventory.TryConsumeEquipment(definition.Kind))
             {
                 Status = inventory.LastMessage;
                 return false;
             }
             var newPlacement = new Placement { definition = definition,
-                hardpointId = socketId, paidFromInventory = paid };
+                hardpointId = socketId, paidFromInventory = paid,
+                persistentId = Guid.NewGuid().ToString("N") };
             newPlacement.instance = MakeEquipment(definition, socket.localPosition, 0);
             installed.Add(newPlacement);
             return true;
@@ -273,7 +351,11 @@ namespace Boatships
             Placement placement = installed[i];
             if (playerRemoved && placement.paidFromInventory && inventory != null)
                 inventory.RefundEquipment(placement.definition.Kind);
-            if (placement.instance != null) Destroy(placement.instance);
+            if (placement.instance != null)
+            {
+                placement.instance.SetActive(false); // Prevent combat rescans seeing pending-destroy mounts.
+                Destroy(placement.instance);
+            }
             installed.RemoveAt(i);
         }
 

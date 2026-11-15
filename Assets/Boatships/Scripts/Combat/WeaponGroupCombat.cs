@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -45,6 +46,10 @@ namespace Boatships
         private float bearingDeg = 90f;
         private float elevationDeg = 10f;
         private string status = "Manual cannon aim ready.";
+
+        // Optional M13 crew performance input; 1.0 preserves original cannon timing.
+        public float CrewReloadMultiplier { get; set; } = 1f;
+        public event Action<int> GroupFired;
 
         public int ActiveGroup => group;
         public float Bearing => bearingDeg;
@@ -108,6 +113,35 @@ namespace Boatships
             foreach (CannonMount mount in mounts)
                 if (mount.group == g) count++;
             return count;
+        }
+
+        /// <summary>Save manual weapon assignments by stable equipment instance key.</summary>
+        public List<ShipWeaponGroupRecord> CaptureWeaponGroups()
+        {
+            RefreshCannons();
+            var result = new List<ShipWeaponGroupRecord>();
+            if (shipyard == null) return result;
+            foreach (CannonMount mount in mounts)
+            {
+                string id = shipyard.GetPersistentId(mount.root);
+                if (!string.IsNullOrEmpty(id))
+                    result.Add(new ShipWeaponGroupRecord { instanceKey = id, group = mount.group });
+            }
+            return result;
+        }
+
+        public void RestoreWeaponGroups(List<ShipWeaponGroupRecord> saved)
+        {
+            assignedGroups.Clear();
+            nextFireTimes.Clear();
+            if (shipyard != null && saved != null)
+            foreach (ShipWeaponGroupRecord item in saved)
+            {
+                if (item == null) continue;
+                Transform root = shipyard.FindEquipmentByPersistentId(item.instanceKey);
+                if (root != null) assignedGroups[root] = Mathf.Clamp(item.group, 1, 4);
+            }
+            RefreshCannons();
         }
 
         private void Update()
@@ -242,11 +276,12 @@ namespace Boatships
                 if (!IsWithinArc(cannon)) continue;
                 inArc++;
                 if (Time.time < cannon.nextFireTime) continue;
-                cannon.nextFireTime = Time.time + reloadSeconds;
+                cannon.nextFireTime = Time.time + reloadSeconds * Mathf.Clamp(CrewReloadMultiplier, 0.5f, 1.5f);
                 nextFireTimes[cannon.root] = cannon.nextFireTime;
                 SpawnCannonball(Muzzle(cannon.root, direction), direction);
                 fired++;
             }
+            if (fired > 0) GroupFired?.Invoke(fired);
             if (fired > 0) status = "Fired " + fired + " cannon(s) from group " + group + ".";
             else if (assigned == 0) status = "Group " + group + " is empty. Assign a cannon.";
             else if (inArc == 0) status = "Aim is outside the cannon(s) firing arcs.";

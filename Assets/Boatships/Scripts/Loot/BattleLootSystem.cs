@@ -14,6 +14,8 @@ namespace Boatships
     public sealed class BattleLootSystem : MonoBehaviour
     {
         private const string EnemyLootId = "prototype_pirate_01";
+        public bool PirateDefeated => economy != null && economy.HasLootEntry(EnemyLootId);
+        public Transform PirateTarget => pirate != null ? pirate.transform : null;
         [SerializeField] private ArchipelagoWorld world;
         [SerializeField] private PortEconomy economy;
         [SerializeField] private PortDocking docking;

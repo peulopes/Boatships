@@ -30,6 +30,10 @@ namespace Boatships
         private Rigidbody body;
         private float currentSpeed;
 
+        // Optional M13 crew modifiers; defaults preserve baseline arcade controls.
+        public float CrewSpeedMultiplier { get; set; } = 1f;
+        public float CrewTurnMultiplier { get; set; } = 1f;
+
         public OceanWaves Ocean { set => ocean = value; }
         public VirtualJoystick Joystick { set => moveJoystick = value; }
         public Transform VisualPivot { set => visualPivot = value; }
@@ -62,13 +66,13 @@ namespace Boatships
         {
             Vector2 input = ReadMoveInput();
             float targetSpeed = input.y >= 0f
-                ? input.y * forwardSpeed
-                : input.y * reverseSpeed;
+                ? input.y * forwardSpeed * Mathf.Clamp(CrewSpeedMultiplier, 0.5f, 1.5f)
+                : input.y * reverseSpeed * Mathf.Clamp(CrewSpeedMultiplier, 0.5f, 1.5f);
             float speedChange = Mathf.Abs(input.y) > 0.01f ? acceleration : deceleration;
             currentSpeed = Mathf.MoveTowards(currentSpeed, targetSpeed, speedChange * Time.fixedDeltaTime);
 
             Quaternion yaw = body.rotation * Quaternion.Euler(
-                0f, input.x * turningSpeedDeg * Time.fixedDeltaTime, 0f);
+                0f, input.x * turningSpeedDeg * Mathf.Clamp(CrewTurnMultiplier, 0.5f, 1.5f) * Time.fixedDeltaTime, 0f);
 
             Vector3 next = body.position + (yaw * Vector3.forward) * currentSpeed * Time.fixedDeltaTime;
             float waterHeight = ocean != null ? ocean.SampleHeight(next.x, next.z, Time.fixedTime) : 0f;

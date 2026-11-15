@@ -114,6 +114,39 @@ namespace Boatships
             return hitAny;
         }
 
+        public List<ShipVoxelRecord> CaptureVoxelDamage()
+        {
+            var damaged = new List<ShipVoxelRecord>();
+            if (definition == null || health == null) return damaged;
+            for (int x = 0; x < definition.Width; ++x)
+            for (int y = 0; y < definition.Height; ++y)
+            for (int z = 0; z < definition.Length; ++z)
+            {
+                if (!definition.ContainsBlock(x, y, z)) continue;
+                if (health[x, y, z] >= definition.BlockHealth - 0.001f) continue;
+                damaged.Add(new ShipVoxelRecord { x = x, y = y, z = z, health = health[x, y, z] });
+            }
+            return damaged;
+        }
+
+        /// <summary>Restores destroyed AND partially damaged voxels from a sparse snapshot.</summary>
+        public void RestoreVoxelDamage(List<ShipVoxelRecord> snapshot)
+        {
+            ResetHull();
+            if (definition == null || health == null || snapshot == null) return;
+            var seen = new HashSet<int>();
+            foreach (ShipVoxelRecord cell in snapshot)
+            {
+                if (cell == null || !definition.ContainsBlock(cell.x, cell.y, cell.z)) continue;
+                int key = (cell.x * definition.Height + cell.y) * definition.Length + cell.z;
+                if (!seen.Add(key)) continue;
+                float value = Mathf.Clamp(cell.health, 0f, definition.BlockHealth);
+                if (value <= 0f) activeBlocks--;
+                health[cell.x, cell.y, cell.z] = value;
+            }
+            RebuildMesh();
+        }
+
         private void RebuildMesh()
         {
             if (definition == null || health == null) return;

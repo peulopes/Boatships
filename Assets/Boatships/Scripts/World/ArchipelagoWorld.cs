@@ -54,6 +54,25 @@ namespace Boatships
         public float HalfExtent => SideLength * 0.5f;
         public Transform Player => player;
 
+        public bool TryGetIsland(Vector2Int cell, out IslandSite site) =>
+            sites.TryGetValue(cell, out site);
+
+        public bool TryNearestOtherIsland(IslandSite origin, bool requirePort, out IslandSite best)
+        {
+            best = default;
+            float shortest = float.PositiveInfinity;
+            foreach (IslandSite site in sites.Values)
+            {
+                if (site.Cell == origin.Cell || (site.Kind == IslandKind.PortSite) != requirePort)
+                    continue;
+                float distance = (site.Center - origin.Center).sqrMagnitude;
+                if (distance >= shortest) continue;
+                shortest = distance;
+                best = site;
+            }
+            return shortest < float.PositiveInfinity;
+        }
+
         public void Configure(Transform follow, Material sandMat, Material grassMat,
             Material rockMat, Material barkMat, Material leafMat, Material stoneMat,
             Material portMat, Material pirateMat, Material treasureMat)

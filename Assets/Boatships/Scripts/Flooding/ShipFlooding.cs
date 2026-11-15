@@ -212,6 +212,35 @@ namespace Boatships
             return true;
         }
 
+        public ShipFloodRecord CaptureFlooding()
+        {
+            var result = new ShipFloodRecord
+            {
+                compartments = new List<float>(compartments),
+                patchedBreaches = new List<int>(patches),
+                repairKits = repairKits,
+                isSinking = sinking,
+                sinkDepth = sinkDepth
+            };
+            return result;
+        }
+
+        /// <summary>Restore flood state after restoring the hull's damaged voxels.</summary>
+        public void RestoreFlooding(ShipFloodRecord saved)
+        {
+            ClearWaterAndBreaches(true);
+            if (saved == null) return;
+            for (int i = 0; i < compartments.Length; ++i)
+                compartments[i] = saved.compartments != null && i < saved.compartments.Count ?
+                    Mathf.Clamp01(saved.compartments[i]) : 0f;
+            if (saved.patchedBreaches != null)
+                foreach (int patch in saved.patchedBreaches) patches.Add(patch);
+            repairKits = Mathf.Clamp(saved.repairKits, 0, 100);
+            sinkDepth = Mathf.Max(0f, saved.sinkDepth);
+            nextScan = 0f;
+            if (saved.isSinking) StartSinking();
+        }
+
         public void ResetShipForDemo()
         {
             if (hull != null) hull.ResetHull();
