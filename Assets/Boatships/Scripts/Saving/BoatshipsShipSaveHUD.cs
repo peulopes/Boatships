@@ -23,11 +23,18 @@ namespace Boatships
             saveManager = manager;
         }
 
+        private void Start()
+        {
+            Transform oldPanel = statusText != null ? statusText.transform.parent : null;
+            BoatshipsDebugMenu.Register(this, statusText, saveButton);
+            if (oldPanel != null && oldPanel.childCount == 0) oldPanel.gameObject.SetActive(false);
+        }
+
         private void Update()
         {
             if (statusText == null || saveManager == null) return;
             statusText.text = "SHIP SAVE (M11) — " + saveManager.InstalledPartCount +
-                " parts currently installed\n" + saveManager.Status + "\nF5: Save | File path in Console";
+                " parts currently installed\n" + saveManager.Status + "\nF4: Save | File path in Console";
         }
 
         private void Save()

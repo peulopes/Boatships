@@ -28,6 +28,7 @@ namespace Boatships
 
         private void Start()
         {
+            BoatshipsDebugMenu.Register(this, label, seedButton, jumpButton, homeButton);
             if (seedButton != null) seedButton.onClick.AddListener(ChangeSeed);
             if (jumpButton != null) jumpButton.onClick.AddListener(JumpToNearestIsland);
             if (homeButton != null) homeButton.onClick.AddListener(ReturnToStart);
@@ -36,7 +37,7 @@ namespace Boatships
         private void Update()
         {
             Keyboard keyboard = Keyboard.current;
-            if (keyboard != null)
+            if (keyboard != null && BoatshipsDebugMenu.IsOpen)
             {
                 if (keyboard.gKey.wasPressedThisFrame) ChangeSeed();
                 if (keyboard.tKey.wasPressedThisFrame) JumpToNearestIsland();

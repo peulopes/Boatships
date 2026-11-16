@@ -8,6 +8,17 @@ namespace Boatships
     /// </summary>
     public sealed class BoatshipsProjectile : MonoBehaviour
     {
+        // Every ship weapon uses this projectile, so port law applies equally to player and NPC fire.
+        public static event System.Action<ShipCombatTarget, Vector3> ShipFired;
+        public static event System.Action<ShipCombatTarget, Vector3> ShotImpacted;
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetObservers()
+        {
+            ShipFired = null;
+            ShotImpacted = null;
+        }
+
         private static readonly System.Collections.Generic.Queue<BoatshipsProjectile> pool =
             new System.Collections.Generic.Queue<BoatshipsProjectile>();
         private bool pooled;
@@ -62,6 +73,7 @@ namespace Boatships
             gravity = Mathf.Max(0f, gravityAcceleration);
             remaining = lifetime;
             launched = true;
+            if (owner != null) ShipFired?.Invoke(owner, transform.position);
         }
 
         private void FixedUpdate()
@@ -96,6 +108,7 @@ namespace Boatships
                 }
                 if (blocked)
                 {
+                    if (owner != null) ShotImpacted?.Invoke(owner, point);
                     if (receiver != null) receiver.ReceiveImpact(point, damage, radius);
                     Release();
                     return;
@@ -104,7 +117,10 @@ namespace Boatships
             transform.position = destination;
             velocity = nextVelocity;
             if (ocean != null && destination.y < ocean.SampleHeight(destination.x, destination.z, Time.time))
+            {
+                if (owner != null) ShotImpacted?.Invoke(owner, destination);
                 Release();
+            }
         }
     }
 }

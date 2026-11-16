@@ -81,6 +81,7 @@ namespace Boatships
                 if (actionButtons[i] != null)
                     actionLabels[i] = actionButtons[i].GetComponentInChildren<Text>(true);
             }
+            BoatshipsDebugMenu.Register(this, jumpToMission, vicinityPanel.transform.Find("JumpButton"));
             Refresh(true);
         }
 

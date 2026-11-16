@@ -24,6 +24,8 @@ namespace Boatships
             isPracticeTarget = practice;
         }
 
+        private readonly System.Collections.Generic.List<Vector3> debris = new System.Collections.Generic.List<Vector3>(48);
+
         private void Awake()
         {
             if (hull == null) hull = GetComponentInChildren<VoxelHull>();
@@ -32,8 +34,13 @@ namespace Boatships
         public bool ReceiveImpact(Vector3 worldPoint, float damage, float radius)
         {
             if (hull == null) return false;
-            bool hit = hull.ApplyImpactWorld(worldPoint, damage, radius);
-            if (hit) HullImpactReceived?.Invoke(worldPoint, damage);
+            debris.Clear();
+            bool hit = hull.ApplyImpactWorld(worldPoint, damage, radius, debris);
+            if (hit)
+            {
+                if (Application.isPlaying) BoatshipsImpactEffect.Spawn(hull, worldPoint, debris);
+                HullImpactReceived?.Invoke(worldPoint, damage);
+            }
             return hit;
         }
 

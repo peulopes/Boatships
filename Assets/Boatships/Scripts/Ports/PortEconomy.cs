@@ -84,6 +84,7 @@ namespace Boatships
         public int ActiveSeed => activeSeed;
         public IReadOnlyList<LootCache> Wrecks => state.wrecks;
         public IReadOnlyList<LootCache> PendingLoot => state.pendingLoot;
+        public event Action<LootCache> LootCollected;
         public CampaignProgress Campaign => state.campaign;
         public bool CanCheckpoint => hasActiveSeed && !saveLocked;
         public float TradingDiscount { get; set; }
@@ -385,9 +386,46 @@ namespace Boatships
                 }
                 granted = loot;
                 LastMessage = "Salvage recovered: " + loot.Describe() + ".";
+                LootCollected?.Invoke(loot);
                 return true;
             }
             return false;
+        }
+
+        public bool TryNearestLoot(Vector3 shipPosition, out LootCache nearest, out float distance)
+        {
+            nearest = null;
+            distance = float.PositiveInfinity;
+            foreach (LootCache cache in state.pendingLoot)
+            {
+                float candidate = Vector2.Distance(new Vector2(shipPosition.x, shipPosition.z), new Vector2(cache.x, cache.z));
+                if (candidate >= distance) continue;
+                nearest = cache;
+                distance = candidate;
+            }
+            return nearest != null;
+        }
+
+        /// <summary>Collect every kind of floating reward through the same saved, duplicate-safe path.</summary>
+        public int CollectNearbyLoot(Vector3 shipPosition, float radius, out string description)
+        {
+            int count = 0;
+            var total = new LootCache();
+            var pending = new List<LootCache>(state.pendingLoot);
+            foreach (LootCache cache in pending)
+            {
+                Vector2 delta = new Vector2(shipPosition.x - cache.x, shipPosition.z - cache.z);
+                if (delta.sqrMagnitude > radius * radius || !TryCollectLoot(cache.id, out LootCache granted)) continue;
+                count++;
+                total.gold += granted.gold;
+                total.wood += granted.wood;
+                total.iron += granted.iron;
+                total.rations += granted.rations;
+                total.spareCannons += granted.spareCannons;
+            }
+            description = count > 0 ? "Collected " + count + (count == 1 ? " loot crate: " : " loot crates: ") + total.Describe() :
+                "No loot collected. Sail within " + radius.ToString("0") + " m of the floating loot and try again.";
+            return count;
         }
 
         public void ResetEconomyForTesting()

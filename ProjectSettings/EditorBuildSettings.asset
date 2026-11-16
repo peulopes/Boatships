@@ -27,4 +27,5 @@ EditorBuildSettings:
     path: Assets/Boatships/Scenes/Boatships_Campaign.unity
     guid: f397a9c512a9d4e439ef65ea6dc54c26
   m_configObjects:
+    com.unity.dt.app-ui: {fileID: 11400000, guid: 1b1c20d82303e4b5781c3ef50ac1449f, type: 2}
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}

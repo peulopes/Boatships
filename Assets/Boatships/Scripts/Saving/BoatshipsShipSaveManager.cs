@@ -78,7 +78,7 @@ namespace Boatships
             Keyboard kb = Keyboard.current;
             if (kb != null)
             {
-                if (kb.f5Key.wasPressedThisFrame) SaveShip();
+                if (kb.f4Key.wasPressedThisFrame) SaveShip();
             }
             if (Time.unscaledTime >= nextSaveAt)
             {
@@ -163,7 +163,7 @@ namespace Boatships
             if (!BoatshipsSaveStore.Exists(path) && !BoatshipsSaveStore.Exists(path + ".bak"))
             {
                 status = "NEW WORLD: no ship file for seed " + loadedSeed +
-                    ". Starter layout has " + shipyard.InstalledCount + " parts. Press F5 to save.";
+                    ". Starter layout has " + shipyard.InstalledCount + " parts. Press F4 to save.";
                 if (!BoatshipsSaveStore.Enabled) Debug.Log("Boatships M11: " + status + " File: " + path, this);
                 return;
             }

@@ -39,6 +39,7 @@ namespace Boatships
 
         private void Start()
         {
+            BoatshipsDebugMenu.Register(this, readout, breachPirateButton, breachPlayerButton, repairPlayerButton, resetButton);
             if (breachPirateButton != null) breachPirateButton.onClick.AddListener(BreachPirate);
             if (breachPlayerButton != null) breachPlayerButton.onClick.AddListener(BreachPlayer);
             if (repairPlayerButton != null) repairPlayerButton.onClick.AddListener(PatchPlayer);
@@ -56,7 +57,7 @@ namespace Boatships
                       "\nB = hole pirate  N = hole player  P = patch your hull  R = reset both"
                     : "FLOODING | Finish / Sail to start flooding tests.";
             }
-            if (!sailing) return;
+            if (!sailing || !BoatshipsDebugMenu.IsOpen) return;
             Keyboard kb = Keyboard.current;
             if (kb == null) return;
             if (kb.bKey.wasPressedThisFrame) BreachPirate();

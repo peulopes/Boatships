@@ -74,7 +74,7 @@ namespace Boatships
                     if (docked) Undock();
                     else Dock();
                 }
-                if (keyboard.oKey.wasPressedThisFrame) JumpToPortForTesting();
+                if (BoatshipsDebugMenu.IsOpen && keyboard.oKey.wasPressedThisFrame) JumpToPortForTesting();
             }
             if (docked)
             {

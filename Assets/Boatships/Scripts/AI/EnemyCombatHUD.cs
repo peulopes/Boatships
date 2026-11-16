@@ -23,6 +23,8 @@ namespace Boatships
             label = statusLabel;
         }
 
+        private void Start() { BoatshipsDebugMenu.Register(this, label); }
+
         private void Update()
         {
             if (label == null || Time.time < nextRefresh) return;
