@@ -225,7 +225,8 @@ namespace Boatships
 
         private bool IsWithinArc(CannonMount cannon)
         {
-            return Mathf.Abs(Mathf.DeltaAngle(cannon.mountYaw, bearingDeg)) <= cannonFiringArc * 0.5f;
+            return cannon.root != null && cannon.barrel != null && cannon.root.gameObject.activeInHierarchy &&
+                Mathf.Abs(Mathf.DeltaAngle(cannon.mountYaw, bearingDeg)) <= cannonFiringArc * 0.5f;
         }
 
         private void UpdateBarrels()

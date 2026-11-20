@@ -3,7 +3,7 @@ using UnityEngine.UI;
 
 namespace Boatships
 {
-    /// <summary>Small low-overhead debug HUD. Existing M8 port UI remains unchanged.</summary>
+    /// <summary>Touch collection for all floating loot, with range guidance and pickup confirmation.</summary>
     public sealed class BattleLootHUD : MonoBehaviour
     {
         [SerializeField] private BattleLootSystem loot;
@@ -13,6 +13,8 @@ namespace Boatships
         [SerializeField] private Button collect;
         [SerializeField] private Button jump;
         private float refreshAt;
+        private GameObject panel;
+        private Text collectCaption;
 
         public void Configure(BattleLootSystem lootSystem, PortDocking port,
             PortEconomy wallet, Text label, Button collectButton, Button jumpButton)
@@ -23,30 +25,73 @@ namespace Boatships
 
         private void Start()
         {
-            if (collect != null) collect.onClick.AddListener(loot.CollectNearby);
-            if (jump != null) jump.onClick.AddListener(loot.JumpToEncounterForTesting);
+            BoatshipsDebugMenu.Register(this, jump);
+            if (collect != null)
+            {
+                collect.onClick.AddListener(Collect);
+                collectCaption = collect.GetComponentInChildren<Text>(true);
+                RectTransform rect = collect.GetComponent<RectTransform>();
+                rect.anchorMin = new Vector2(0.15f, 0.04f);
+                rect.anchorMax = new Vector2(0.85f, 0.34f);
+                rect.offsetMin = rect.offsetMax = Vector2.zero;
+            }
+            if (jump != null && loot != null) jump.onClick.AddListener(loot.JumpToEncounterForTesting);
+            // Keep this gameplay action above the lower control row, clear of the joysticks.
+            RectTransform root = GetComponent<RectTransform>();
+            root.anchorMin = root.anchorMax = new Vector2(0.5f, 0f);
+            root.pivot = new Vector2(0.5f, 0f);
+            root.anchoredPosition = new Vector2(0f, 180f);
+            root.sizeDelta = new Vector2(560f, 165f);
+            if (status != null)
+            {
+                panel = status.transform.parent.gameObject;
+                status.rectTransform.anchorMin = new Vector2(0.03f, 0.38f);
+                status.rectTransform.anchorMax = new Vector2(0.97f, 0.98f);
+                status.rectTransform.offsetMin = status.rectTransform.offsetMax = Vector2.zero;
+                status.raycastTarget = false;
+            }
+            Refresh();
         }
 
         private void Update()
         {
-            if (loot == null || economy == null || Time.unscaledTime < refreshAt) return;
-            refreshAt = Time.unscaledTime + 0.2f;
+            if (Time.unscaledTime < refreshAt) return;
+            refreshAt = Time.unscaledTime + 0.1f;
+            Refresh();
+        }
+
+        private void Collect()
+        {
+            if (loot == null) return;
+            loot.CollectNearby();
+            Refresh();
+        }
+
+        private void Refresh()
+        {
+            if (loot == null || economy == null) return;
             bool docked = docking != null && docking.IsDocked;
+            bool visible = !docked && (loot.HasLoot || loot.ShowCollectionFeedback);
+            if (panel != null) panel.SetActive(visible);
             if (collect != null)
             {
-                collect.gameObject.SetActive(!docked);
-                collect.interactable = loot.CanCollect;
+                collect.interactable = !docked && loot.CanCollect;
+                if (collectCaption != null)
+                    collectCaption.text = loot.CanCollect ? "Collect Loot" : loot.HasLoot ?
+                        "Sail within " + loot.CollectRadius.ToString("0") + " m" : "Loot Collected";
             }
             if (jump != null) jump.gameObject.SetActive(!docked);
-            if (status != null)
-            {
-                status.enabled = !docked;
-                if (docked) return;
-                status.text = "SALVAGE | " + economy.StockSummary + " | Gold " + economy.Gold + "\n" +
-                    loot.LastEvent + "\n" + (loot.HasLoot ?
-                    "Loot " + loot.DistanceToLoot.ToString("0") + "m away: " + loot.LootDescription :
-                    "Fight the pirate; recover its loot after it sinks.");
-            }
+            if (status == null || !visible) return;
+            status.enabled = true;
+            status.text = loot.ShowCollectionFeedback ? loot.LastEvent + "\nGold " + economy.Gold + " | " + economy.StockSummary :
+                "FLOATING LOOT — " + loot.DistanceToLoot.ToString("0") + " m away\n" + loot.LootDescription +
+                "\n" + (loot.CanCollect ? "In range — tap Collect Loot." : "Sail closer to collect (within " + loot.CollectRadius.ToString("0") + " m).");
+        }
+
+        private void OnDestroy()
+        {
+            if (collect != null) collect.onClick.RemoveListener(Collect);
+            if (jump != null && loot != null) jump.onClick.RemoveListener(loot.JumpToEncounterForTesting);
         }
     }
 }

@@ -118,7 +118,7 @@ namespace Boatships
             return true;
         }
 
-        private void RemoveDisconnectedSections()
+        private void RemoveDisconnectedSections(List<Vector3> debris = null)
         {
             var visited = new HashSet<Vector3Int>();
             var largest = new List<Vector3Int>();
@@ -148,7 +148,12 @@ namespace Boatships
             }
             var retained = new HashSet<Vector3Int>(largest);
             foreach (Vector3Int cell in visited)
-                if (!retained.Contains(cell)) { health[cell.x, cell.y, cell.z] = 0f; activeBlocks--; }
+                if (!retained.Contains(cell))
+                {
+                    RecordDebris(debris, cell.x, cell.y, cell.z);
+                    health[cell.x, cell.y, cell.z] = 0f;
+                    activeBlocks--;
+                }
         }
 
         public Vector3 LiveCenterOfMass()
@@ -174,7 +179,7 @@ namespace Boatships
         /// Snaps the hit to the nearest live voxel; applies radial damage around it.
         /// The caller may provide a hit on the ship's coarse BoxCollider.
         /// </summary>
-        public bool ApplyImpactWorld(Vector3 worldPoint, float damage, float radius)
+        public bool ApplyImpactWorld(Vector3 worldPoint, float damage, float radius, List<Vector3> debris = null)
         {
             if (definition == null || health == null || activeBlocks == 0 || damage <= 0f) return false;
             Vector3 localHit = transform.InverseTransformPoint(worldPoint);
@@ -209,15 +214,22 @@ namespace Boatships
                 if (health[x, y, z] > 0f) continue;
                 health[x, y, z] = 0f;
                 activeBlocks--;
+                RecordDebris(debris, x, y, z);
                 removedAny = true;
             }
 
             if (removedAny)
             {
-                if (structuralIntegrity) RemoveDisconnectedSections();
+                if (structuralIntegrity) RemoveDisconnectedSections(debris);
                 RebuildMesh();
             }
             return hitAny;
+        }
+
+        private void RecordDebris(List<Vector3> debris, int x, int y, int z)
+        {
+            if (debris != null && debris.Count < 48)
+                debris.Add(transform.TransformPoint(definition.BlockCenter(x, y, z)));
         }
 
         public List<ShipVoxelRecord> CaptureVoxelDamage()

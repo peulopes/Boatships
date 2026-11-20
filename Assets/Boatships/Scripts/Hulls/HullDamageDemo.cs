@@ -26,7 +26,7 @@ namespace Boatships
 
         private void Update()
         {
-            if (hull == null || hull.Definition == null) return;
+            if (!BoatshipsDebugMenu.IsOpen || hull == null || hull.Definition == null) return;
 
             Keyboard keyboard = Keyboard.current;
             if (keyboard != null && keyboard.hKey.wasPressedThisFrame)
@@ -74,7 +74,7 @@ namespace Boatships
 
         private void OnGUI()
         {
-            if (hull == null || hull.Definition == null) return;
+            if (!BoatshipsDebugMenu.IsOpen || hull == null || hull.Definition == null) return;
             GUILayout.BeginArea(new Rect(12f, 12f, 440f, 100f), GUI.skin.box);
             GUILayout.Label("Boatships | Hull damage test (prototype)");
             GUILayout.Label($"Hull voxels: {hull.RemainingBlocks} / {hull.TotalBlocks}");

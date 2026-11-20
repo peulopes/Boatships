@@ -34,15 +34,23 @@ namespace Boatships
         private int knownSeed = int.MinValue;
         private bool encounterProcessed;
         private string lastEvent = "Defeat the pirate to reveal salvage.";
+        private float feedbackUntil;
 
-        public bool HasLoot => pending != null;
+        public bool HasLoot => economy != null && economy.PendingLoot.Count > 0;
         public string LastEvent => lastEvent;
-        public float DistanceToLoot => pending != null && player != null ?
-            Vector2.Distance(new Vector2(player.transform.position.x, player.transform.position.z),
-                new Vector2(pending.x, pending.z)) : float.PositiveInfinity;
-        public bool CanCollect => pending != null && !IsDocked && DistanceToLoot <= collectRadius;
-        public string LootDescription => pending != null ? pending.Describe() : "No salvage floating nearby";
+        public float CollectRadius => collectRadius;
+        public bool ShowCollectionFeedback => Time.unscaledTime < feedbackUntil;
+        public float DistanceToLoot => TryNearestLoot(out _, out float distance) ? distance : float.PositiveInfinity;
+        public bool CanCollect => HasLoot && !IsDocked && DistanceToLoot <= collectRadius;
+        public string LootDescription => TryNearestLoot(out PortEconomy.LootCache nearest, out _) ? nearest.Describe() : "No loot remaining";
         private bool IsDocked => docking != null && docking.IsDocked;
+
+        private bool TryNearestLoot(out PortEconomy.LootCache nearest, out float distance)
+        {
+            nearest = null;
+            distance = float.PositiveInfinity;
+            return economy != null && player != null && economy.TryNearestLoot(player.transform.position, out nearest, out distance);
+        }
 
         public void Configure(ArchipelagoWorld map, PortEconomy wallet, PortDocking port,
             ShipCombatTarget controlled, ShipCombatTarget enemy, ShipFlooding enemyFlood,
@@ -53,13 +61,17 @@ namespace Boatships
             shipyard = customization; ocean = waves;
         }
 
-        private void Start() => SynchronizeWorld(true);
+        private void Start()
+        {
+            if (economy != null) economy.LootCollected += OnLootCollected;
+            SynchronizeWorld(true);
+        }
 
         private void Update()
         {
-            if (world == null || economy == null || pirate == null || player == null) return;
+            if (world == null || economy == null || player == null) return;
             SynchronizeWorld(false);
-            if (!encounterProcessed && (pirate.RemainingVoxels <= 0 ||
+            if (pirate != null && !encounterProcessed && (pirate.RemainingVoxels <= 0 ||
                 (pirateFlooding != null && pirateFlooding.IsSinking)))
             {
                 if (!economy.HasLootEntry(EnemyLootId))
@@ -87,7 +99,7 @@ namespace Boatships
             if (keyboard != null)
             {
                 if (keyboard.cKey.wasPressedThisFrame) CollectNearby();
-                if (keyboard.yKey.wasPressedThisFrame) JumpToEncounterForTesting();
+                if (BoatshipsDebugMenu.IsOpen && keyboard.yKey.wasPressedThisFrame) JumpToEncounterForTesting();
             }
         }
 
@@ -137,13 +149,21 @@ namespace Boatships
         {
             if (!CanCollect)
             {
-                lastEvent = pending == null ? "There is no salvage to collect." :
-                    "Move closer to the salvage marker (within " + collectRadius + "m).";
+                lastEvent = IsDocked ? "Depart the harbour to collect floating loot." : !HasLoot ? "There is no loot to collect." :
+                    "Sail within " + collectRadius.ToString("0") + " m of the floating loot.";
+                feedbackUntil = Time.unscaledTime + 6f;
                 return;
             }
-            if (economy.TryCollectLoot(pending.id, out PortEconomy.LootCache collected))
+            economy.CollectNearbyLoot(player.transform.position, collectRadius, out lastEvent);
+            feedbackUntil = Time.unscaledTime + 6f;
+        }
+
+        private void OnLootCollected(PortEconomy.LootCache collected)
+        {
+            lastEvent = "Collected loot: " + collected.Describe();
+            feedbackUntil = Time.unscaledTime + 6f;
+            if (pending != null && pending.id == collected.id)
             {
-                lastEvent = "Recovered " + collected.Describe() + ".";
                 pending = null;
                 DestroyMarker();
             }
@@ -192,12 +212,17 @@ namespace Boatships
         private void DestroyMarker()
         {
             if (marker == null) return;
+            marker.SetActive(false);
             Renderer renderer = marker.GetComponent<Renderer>();
             if (renderer != null && renderer.material != null) Destroy(renderer.material);
             Destroy(marker);
             marker = null;
         }
 
-        private void OnDestroy() => DestroyMarker();
+        private void OnDestroy()
+        {
+            if (economy != null) economy.LootCollected -= OnLootCollected;
+            DestroyMarker();
+        }
     }
 }

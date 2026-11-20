@@ -217,11 +217,11 @@ namespace Boatships
             Keyboard kb = Keyboard.current;
             if (kb != null)
             {
-                if (kb.f8Key.wasPressedThisFrame) InjureSelectedForTest();
+                if (BoatshipsDebugMenu.IsOpen && kb.f8Key.wasPressedThisFrame) InjureSelectedForTest();
                 if (kb.f9Key.wasPressedThisFrame) TreatSelectedAtPort();
-                if (kb.f10Key.wasPressedThisFrame) GrantSelectedTrainingXp();
+                if (BoatshipsDebugMenu.IsOpen && kb.f10Key.wasPressedThisFrame) GrantSelectedTrainingXp();
                 if (kb.f11Key.wasPressedThisFrame) RecoverOverboardAtPort();
-                if (kb.f12Key.wasPressedThisFrame) SendSelectedOverboardForTest();
+                if (BoatshipsDebugMenu.IsOpen && kb.f12Key.wasPressedThisFrame) SendSelectedOverboardForTest();
             }
 
             if (flooding != null && !flooding.IsSinking) sinkingProcessed = false;

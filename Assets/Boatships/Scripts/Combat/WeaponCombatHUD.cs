@@ -35,6 +35,7 @@ namespace Boatships
 
         private void Start()
         {
+            BoatshipsDebugMenu.Register(this, resetButton);
             if (weapons == null) return;
             for (int i = 0; i < groupButtons.Length; ++i)
             {

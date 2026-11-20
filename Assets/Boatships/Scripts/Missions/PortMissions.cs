@@ -165,7 +165,7 @@ namespace Boatships
                 nextObjectiveCheck = Time.unscaledTime + 0.25f;
                 UpdateObjectives();
             }
-            if (Keyboard.current != null && Keyboard.current.jKey.wasPressedThisFrame)
+            if (BoatshipsDebugMenu.IsOpen && Keyboard.current != null && Keyboard.current.jKey.wasPressedThisFrame)
                 JumpToObjectiveForTesting();
         }
 

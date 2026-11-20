@@ -36,11 +36,10 @@ namespace Boatships
 
         private IEnumerator Start()
         {
+            if (economy != null) economy.LootCollected += OnLootCollected;
             for (int i = 0; i < 8; i++) yield return null;
             docking = FindAnyObjectByType<PortDocking>();
             if (world == null || economy == null || player == null || template == null) yield break;
-            cargoMaterial = new Material(Shader.Find("Universal Render Pipeline/Lit"))
-                { color = new Color(1f, 0.72f, 0.12f) };
             ready = true;
         }
 
@@ -303,17 +302,17 @@ namespace Boatships
 
         public void CollectNearbyCargo()
         {
-            if (docking == null || docking.IsDocked) return;
-            var pending = new List<PortEconomy.LootCache>(economy.PendingLoot);
-            int collected = 0;
-            foreach (PortEconomy.LootCache cache in pending)
-            {
-                if (!cache.id.StartsWith("campaign_", System.StringComparison.Ordinal)) continue;
-                Vector2 delta = new Vector2(player.transform.position.x - cache.x, player.transform.position.z - cache.z);
-                if (delta.sqrMagnitude <= 81f && economy.TryCollectLoot(cache.id, out _)) collected++;
-            }
-            Status = collected > 0 ? "Recovered cargo from " + collected + " vessel(s)." : "Sail within 9m of cargo.";
+            if (economy == null || player == null || (docking != null && docking.IsDocked)) return;
+            economy.CollectNearbyLoot(player.transform.position, 9f, out string description);
+            Status = description;
             SynchronizeCargo();
+        }
+
+        private void OnLootCollected(PortEconomy.LootCache collected)
+        {
+            if (!cargo.TryGetValue(collected.id, out GameObject marker)) return;
+            if (marker != null) { marker.SetActive(false); Destroy(marker); }
+            cargo.Remove(collected.id);
         }
 
         private void SynchronizeCargo()
@@ -333,6 +332,9 @@ namespace Boatships
                     player.transform.position.z - cache.z).sqrMagnitude > 14400f) continue;
                 if (!cargo.TryGetValue(cache.id, out GameObject marker))
                 {
+                    if (cargoMaterial == null)
+                        cargoMaterial = new Material(Shader.Find("Universal Render Pipeline/Lit"))
+                            { color = new Color(1f, 0.72f, 0.12f) };
                     marker = GameObject.CreatePrimitive(PrimitiveType.Cube);
                     marker.name = "Campaign cargo";
                     Destroy(marker.GetComponent<Collider>());
@@ -351,6 +353,11 @@ namespace Boatships
             foreach (GameObject marker in cargo.Values) if (marker != null) Destroy(marker);
             actors.Clear(); cargo.Clear();
         }
-        private void OnDestroy() { ClearActors(); if (cargoMaterial != null) Destroy(cargoMaterial); }
+        private void OnDestroy()
+        {
+            if (economy != null) economy.LootCollected -= OnLootCollected;
+            ClearActors();
+            if (cargoMaterial != null) Destroy(cargoMaterial);
+        }
     }
 }
