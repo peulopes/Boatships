@@ -17,7 +17,7 @@ namespace Boatships
     }
 
     /// <summary>First-person view: walking on land (CharacterController) or on a moving ship deck
-    /// (hull-local coordinates), cutlass and block, deck cannons, interactions and a touch HUD.</summary>
+    /// (hull-local coordinates), cutlass and block, deck cannons, interactions and a keyboard/mouse HUD.</summary>
     [DefaultExecutionOrder(1000)]
     public sealed class BoatshipsFirstPerson : MonoBehaviour
     {
@@ -27,7 +27,6 @@ namespace Boatships
         private const float WalkSpeed = 1.7f;
         private const float Gravity = 6f;
         private const float MouseLook = 0.12f;
-        private const float TouchLook = 0.16f;
         private enum Mode { None, Ground, Deck }
 
         private BoatshipsWorldMapView view;
@@ -56,17 +55,10 @@ namespace Boatships
         private readonly List<AudioListener> disabledListeners = new List<AudioListener>();
         private bool gameplayCanvasWasEnabled;
         private Action exitAction;
-        private int lookTouch = -1;
-        private bool attackQueued;
-        private bool interactQueued;
         private string status = "";
         private readonly List<RaycastResult> uiHits = new List<RaycastResult>();
 
         private Canvas hudCanvas;
-        private VirtualJoystick joystick;
-        private HoldButton blockButton;
-        private Button attackButton;
-        private Button interactButton;
         private Button exitButton;
         private Text promptText;
         private Text healthText;
@@ -89,7 +81,7 @@ namespace Boatships
         public void SetExit(string label, Action action)
         {
             exitAction = action;
-            BoatshipsUI.SetButton(exitButton, label, action != null);
+            BoatshipsUI.SetButton(exitButton, (label ?? "Leave") + "  [Tab]", action != null);
             exitButton.gameObject.SetActive(action != null);
         }
 
@@ -236,12 +228,13 @@ namespace Boatships
             if (input)
             {
                 Keyboard keyboard = Keyboard.current;
-                if (interactQueued || (keyboard != null && (keyboard.eKey.wasPressedThisFrame || keyboard.fKey.wasPressedThisFrame))) Interact();
+                if (keyboard != null && (keyboard.eKey.wasPressedThisFrame || keyboard.fKey.wasPressedThisFrame)) Interact();
+                // Tab leaves the scene, as in Bannerlord.
+                if (keyboard != null && keyboard.tabKey.wasPressedThisFrame && exitAction != null) exitAction.Invoke();
                 Mouse mouse = Mouse.current;
                 bool click = mouse != null && Cursor.lockState == CursorLockMode.Locked && mouse.leftButton.wasPressedThisFrame;
-                if (attackQueued || click) Attack();
+                if (click) Attack();
             }
-            attackQueued = false; interactQueued = false;
             UpdateHud();
         }
 
@@ -371,8 +364,6 @@ namespace Boatships
 
         private Vector2 ReadMove()
         {
-            Vector2 stick = joystick != null ? joystick.Direction : Vector2.zero;
-            if (stick.sqrMagnitude > 0.0025f) return stick;
             Keyboard keyboard = Keyboard.current;
             if (keyboard == null) return Vector2.zero;
             float x = (keyboard.dKey.isPressed || keyboard.rightArrowKey.isPressed ? 1f : 0f) -
@@ -387,31 +378,13 @@ namespace Boatships
             Vector2 look = Vector2.zero;
             Mouse mouse = Mouse.current;
             if (mouse != null && Cursor.lockState == CursorLockMode.Locked) look += mouse.delta.ReadValue() * MouseLook;
-            Touchscreen screen = Touchscreen.current;
-            if (screen == null) return look;
-            bool found = false;
-            foreach (var touch in screen.touches)
-            {
-                int id = touch.touchId.ReadValue();
-                if (!touch.press.isPressed) continue;
-                if (lookTouch < 0 && touch.press.wasPressedThisFrame)
-                {
-                    Vector2 position = touch.position.ReadValue();
-                    if (position.x > Screen.width * 0.4f && !OverUI(position)) lookTouch = id;
-                }
-                if (id != lookTouch) continue;
-                found = true;
-                look += touch.delta.ReadValue() * TouchLook;
-            }
-            if (!found) lookTouch = -1;
             return look;
         }
 
         private bool ReadBlock()
         {
             Mouse mouse = Mouse.current;
-            return (blockButton != null && blockButton.Held) ||
-                (mouse != null && Cursor.lockState == CursorLockMode.Locked && mouse.rightButton.isPressed);
+            return mouse != null && Cursor.lockState == CursorLockMode.Locked && mouse.rightButton.isPressed;
         }
 
         private bool OverUI(Vector2 position)
@@ -448,40 +421,13 @@ namespace Boatships
             BoatshipsUI.Anchor(healthText.rectTransform, 0.75f, 0.88f, 0.985f, 0.985f);
             healthText.gameObject.AddComponent<Shadow>().effectDistance = new Vector2(2f, -2f);
 
-            exitButton = BoatshipsUI.Button("Leave", safe, () => exitAction?.Invoke(), 60f, 22);
-            Place((RectTransform)exitButton.transform, new Vector2(0f, 1f), new Vector2(24f, -16f), new Vector2(300f, 64f));
-            exitButton.GetComponent<Image>().color = BoatshipsUI.Accent;
-            Button menu = BoatshipsUI.Button("Menu", safe, () => { if (hud != null) hud.OpenCampaignMenu(); }, 60f, 22);
-            Place((RectTransform)menu.transform, new Vector2(0f, 1f), new Vector2(336f, -16f), new Vector2(160f, 64f));
-
-            attackButton = BoatshipsUI.Button("ATTACK", safe, () => attackQueued = true, 170f, 30);
-            Place((RectTransform)attackButton.transform, new Vector2(1f, 0f), new Vector2(-40f, 40f), new Vector2(190f, 190f));
-            attackButton.GetComponent<Image>().sprite = BoatshipsUI.Circle;
-            attackButton.GetComponent<Image>().color = new Color(0.65f, 0.2f, 0.15f, 0.85f);
-            RectTransform block = BoatshipsUI.Rect("BLOCK", safe, typeof(Image), typeof(HoldButton));
-            Place(block, new Vector2(1f, 0f), new Vector2(-250f, 40f), new Vector2(140f, 140f));
-            Image blockImage = block.GetComponent<Image>();
-            blockImage.sprite = BoatshipsUI.Circle; blockImage.color = new Color(0.2f, 0.35f, 0.5f, 0.85f);
-            blockButton = block.GetComponent<HoldButton>();
-            Text blockLabel = BoatshipsUI.Label("BLOCK", block, 24, TextAnchor.MiddleCenter);
-            BoatshipsUI.Stretch(blockLabel.rectTransform);
-            interactButton = BoatshipsUI.Button("USE", safe, () => interactQueued = true, 120f, 26);
-            Place((RectTransform)interactButton.transform, new Vector2(1f, 0f), new Vector2(-60f, 250f), new Vector2(150f, 110f));
-            interactButton.GetComponent<Image>().color = new Color(0.75f, 0.5f, 0.2f, 0.9f);
-
-            RectTransform stickBack = BoatshipsUI.Rect("Walk Joystick", safe, typeof(Image), typeof(VirtualJoystick));
-            Place(stickBack, Vector2.zero, new Vector2(60f, 50f), new Vector2(260f, 260f));
-            Image back = stickBack.GetComponent<Image>();
-            back.sprite = BoatshipsUI.Circle; back.color = new Color(1f, 1f, 1f, 0.16f);
-            Image knob = BoatshipsUI.Image("Handle", stickBack, new Color(1f, 1f, 1f, 0.45f));
-            knob.sprite = BoatshipsUI.Circle; knob.raycastTarget = false;
-            knob.rectTransform.anchorMin = knob.rectTransform.anchorMax = new Vector2(0.5f, 0.5f);
-            knob.rectTransform.sizeDelta = new Vector2(110f, 110f);
-            joystick = stickBack.GetComponent<VirtualJoystick>();
-            joystick.Background = stickBack;
-            joystick.Handle = knob.rectTransform;
-            bool touch = Application.isMobilePlatform || Touchscreen.current != null;
-            stickBack.gameObject.SetActive(touch);
+            exitButton = BoatshipsUI.Button("Leave  [Tab]", safe, () => exitAction?.Invoke(), 52f, 20);
+            Place((RectTransform)exitButton.transform, new Vector2(0f, 1f), new Vector2(16f, -16f), new Vector2(300f, 52f));
+            BoatshipsUI.StyleButton(exitButton, BoatshipsUI.Accent);
+            exitButton.GetComponentInChildren<Text>().color = BoatshipsUI.Ink;
+            Button menu = BoatshipsUI.Button("Menu  [Esc]", safe,
+                () => { if (hud != null) hud.OpenCampaignPage(BoatshipsCampaignHUD.SettingsPage); }, 52f, 20);
+            Place((RectTransform)menu.transform, new Vector2(0f, 1f), new Vector2(324f, -16f), new Vector2(170f, 52f));
         }
 
         private static void Place(RectTransform rect, Vector2 anchor, Vector2 offset, Vector2 size)
@@ -495,19 +441,11 @@ namespace Boatships
         private void UpdateHud()
         {
             bool combat = mode == Mode.Deck;
-            attackButton.gameObject.SetActive(combat);
-            blockButton.gameObject.SetActive(combat && mounted == null);
-            BoatshipsUI.SetButton(attackButton, mounted != null ? (mounted.Ready ? "FIRE" : "RELOAD") : "ATTACK", true);
-            bool usable = mounted != null || focused != null;
-            interactButton.gameObject.SetActive(usable);
-            BoatshipsUI.SetButton(interactButton, mounted != null ? "LEAVE" : "USE", true);
-            bool desktop = !Application.isMobilePlatform;
-            string keys = desktop ? (Cursor.lockState == CursorLockMode.Locked ? "" : "\nClick to look around (Esc frees the mouse)") : "";
+            string keys = Cursor.lockState == CursorLockMode.Locked ? "" : "\n<color=#B8A27A>Click to look around  ·  Esc opens the menu</color>";
             if (mounted != null)
-                promptText.text = (mounted.Ready ? "Aim and fire" : "Reloading…") +
-                    (desktop ? "  —  left click to fire, E to leave the cannon" : "") + keys;
-            else if (focused != null) promptText.text = focused.Prompt + (desktop ? "  [E]" : "") + keys;
-            else promptText.text = combat && desktop ? "Left click: attack   Right mouse: block" + keys : keys.TrimStart('\n');
+                promptText.text = (mounted.Ready ? "Aim and fire" : "Reloading…") + "  —  [Left click] fire   [E] leave the cannon" + keys;
+            else if (focused != null) promptText.text = focused.Prompt + "  [E]" + keys;
+            else promptText.text = combat ? "[Left click] attack   [Right mouse] block" + keys : keys.TrimStart('\n');
             healthText.text = combat ? "Health " + Mathf.CeilToInt(Health) + (Kills > 0 ? "\nFoes downed " + Kills : "") : "";
             statusText.text = status;
             flashAlpha = Mathf.MoveTowards(flashAlpha, 0f, Time.deltaTime * 1.5f);
@@ -519,16 +457,6 @@ namespace Boatships
             End();
             if (BoatshipsDeckFighter.Player == this) BoatshipsDeckFighter.Player = null;
         }
-    }
-
-    /// <summary>Touch button that reports whether it is being held.</summary>
-    public sealed class HoldButton : MonoBehaviour, IPointerDownHandler, IPointerUpHandler, IPointerExitHandler
-    {
-        public bool Held { get; private set; }
-        public void OnPointerDown(PointerEventData eventData) => Held = true;
-        public void OnPointerUp(PointerEventData eventData) => Held = false;
-        public void OnPointerExit(PointerEventData eventData) => Held = false;
-        private void OnDisable() => Held = false;
     }
 
     /// <summary>A deck gun the first-person player can man: aim with the look controls, fire, reload.</summary>

@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 namespace Boatships
@@ -33,18 +34,24 @@ namespace Boatships
         private float mainMenuTimeScale = 1f;
         private BoatshipsCharacter character;
         private BoatshipsCharacterCreation creation;
+        private BoatshipsWorldMapView view;
+        private Button[] tabButtons;
+
+        public const int HullPage = 0, FleetPage = 1, ContractsPage = 2, UpgradesPage = 3, SettingsPage = 4, HelpPage = 5;
+        private static readonly string[] pageNames = { "Hull", "Fleet", "Contracts", "Upgrades", "Settings", "Help" };
+        private static readonly string[] pageKeys = { "H", "L", "J", "U", "Esc", "F1" };
         private static readonly string[] tutorial = {
-            "Welcome to Boatships. You travel on the world map: tap the sea or an island to set a course, drag to pan, and pinch or scroll to zoom. Time passes while you sail, and your crew eats rations every day.",
-            "Arriving at a port opens the town menu. With a ship, go to the harbor: the Store sells supplies, the Tavern recruits crew, and the Shipyard fits equipment. Without a ship, work aboard AI ships from the tavern, book passage, or save up for a sloop at the shipwright.",
-            "Choose Walk into town to explore a port in first person: walk with the left stick or WASD, look by dragging the right side of the screen (or click to capture the mouse), and walk up to a door and tap Use (E) to visit the tavern, store, shipwright or harbor master.",
+            "Welcome to Boatships. You travel on the world map: left-click the sea or an island to set a course, drag to pan and scroll to zoom. Space pauses, 1 / 2 / 3 set the time speed, Home re-centres on your ship. Time passes while you sail, and your crew eats rations every day.",
+            "Arriving at a port opens the town menu (E). With a ship, go to the harbor: the Store sells supplies, the Tavern recruits crew, and the Shipyard fits equipment. Without a ship, work aboard AI ships from the tavern, book passage, or save up for a sloop at the shipwright.",
+            "Choose Walk into town to explore a port in first person: WASD to walk, click to capture the mouse and look around, E to use a door (tavern, store, shipwright, harbor master). Tab leaves the town; Esc opens the menu.",
             "Working aboard AI ships pays wages when the voyage ends and trains the skill your role uses. If pirates attack your employer, you choose whether to fight alongside the crew.",
-            "Pirates hunt captains on the map. When one reaches you, fight, try to outrun them, or pay them off. Battles, coasts and pirate havens are played in 3D: steer with the left joystick or WASD, aim with the right joystick, select a weapon group, then Fire. Tap World Map to sail on once no enemy is within 120m.",
-            "In Campaign → Hull, choose a grid cell and add or remove blocks. Each addition costs 1 wood. Unsupported sections detach. Heavy equipment increases draft and reduces speed.",
-            "Recruit sailors and cycle their duty to Fighter for boarding, Gunner for reload bonuses, Carpenter for repairs, or Sailor for handling. Treat injuries at a port.",
-            "Campaign contracts form a repeating chain of naval combat, exploration, delivery, and capture. Accept and claim them while docked. Reputation unlocks upgrades and lowers faction store prices.",
-            "Weaken an enemy hull below 65%, approach within 8m, then choose Board Nearby in Fleet. Fighters cross to its deck and fight. Captured vessels join your fleet.",
-            "Sail within 9m of floating cargo to collect it. Rescue overboard sailors with the Rescue button. Wrecks, cargo, crew, missions, and ship layouts persist per world seed.",
-            "Settings provides three save slots, checkpoint status, graphics quality, 30/60 FPS, and volume. Slot 1 imports your earlier saves. Device performance must be checked on your phone."
+            "Pirates hunt captains on the map. When one reaches you, fight, try to outrun them, or pay them off. Battles, coasts and pirate havens are played in 3D: steer with WASD, select a weapon group with 1-4, aim with the arrow keys and hold Space to fire. Right-drag rotates the camera, scroll zooms. Press M for the world map once no enemy is within 120m.",
+            "Campaign → Hull (H): choose a grid cell and add or remove blocks. Each addition costs 1 wood. Unsupported sections detach. Heavy equipment increases draft and reduces speed.",
+            "Crew (P) opens your crew roster: cycle a sailor's duty to Fighter for boarding, Gunner for reload bonuses, Carpenter for repairs, or Sailor for handling. Treat injuries at a port.",
+            "Contracts (J) form a repeating chain of naval combat, exploration, delivery, and capture. Accept and claim them while docked. Reputation unlocks Upgrades (U) and lowers faction store prices.",
+            "Weaken an enemy hull below 65%, approach within 8m, then choose Board Nearby in Fleet (L). Fighters cross to its deck and fight. Captured vessels join your fleet.",
+            "Sail within 9m of floating cargo and press F to collect it. Wrecks, cargo, crew, missions, and ship layouts persist per world seed.",
+            "Settings (Esc) provides three save slots, checkpoints, graphics quality, frame rate and volume. C opens your character sheet at any time."
         };
 
         public void Configure(BoatshipsMobilePresentation mobile, BoatshipsConstruction builder,
@@ -56,46 +63,48 @@ namespace Boatships
         }
 
         /// <summary>Connects the world-map voyage layer (installed at scene load by BoatshipsVoyageBootstrap).</summary>
-        public void BindVoyage(BoatshipsCharacter captain, BoatshipsCharacterCreation creator)
-        { character = captain; creation = creator; }
+        public void BindVoyage(BoatshipsCharacter captain, BoatshipsCharacterCreation creator, BoatshipsWorldMapView mapView = null)
+        { character = captain; creation = creator; view = mapView; }
 
         /// <summary>True while the main menu or the campaign panel covers the screen.</summary>
         public bool BlockingOverlayOpen => open || (mainMenu != null && mainMenu.activeSelf);
 
         public void OpenCampaignMenu() { if (!open && mainMenu != null && !mainMenu.activeSelf) Toggle(); }
 
+        /// <summary>Opens the campaign screen on a page, or switches page if it is already open.</summary>
+        public void OpenCampaignPage(int requested)
+        {
+            if (mainMenu == null || mainMenu.activeSelf) return;
+            page = Mathf.Clamp(requested, 0, pageNames.Length - 1);
+            if (!open) Toggle(); else BuildPage();
+        }
+
         private IEnumerator Start()
         {
             while (presentation.SafeRoot == null) yield return null;
             font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            RectTransform menu = MakeObject("Campaign Menu", presentation.SafeRoot, typeof(Image), typeof(Button));
-            menu.anchorMin = menu.anchorMax = new Vector2(0.5f, 1f);
-            menu.pivot = new Vector2(0.5f, 1f); menu.anchoredPosition = new Vector2(0f, -12f);
-            menu.sizeDelta = new Vector2(230f, 54f);
-            menu.GetComponent<Image>().color = new Color(0.08f, 0.25f, 0.3f);
-            menu.GetComponent<Button>().targetGraphic = menu.GetComponent<Image>();
-            Text caption = MakeLabel("Campaign", menu, 24); Stretch(caption.rectTransform);
-            menu.GetComponent<Button>().onClick.AddListener(Toggle);
             backdrop = MakeObject("Campaign Overlay", presentation.SafeRoot, typeof(Image)).gameObject;
             Stretch(backdrop.GetComponent<RectTransform>());
-            backdrop.GetComponent<Image>().color = new Color(0.02f, 0.06f, 0.08f, 0.85f);
+            backdrop.GetComponent<Image>().color = new Color(0.03f, 0.025f, 0.02f, 0.82f);
             card = MakeObject("Campaign Panel", backdrop.transform, typeof(Image));
-            card.GetComponent<Image>().color = new Color(0.04f, 0.12f, 0.16f, 0.98f);
+            card.GetComponent<Image>().color = BoatshipsUI.Panel;
+            BoatshipsUI.Frame(card.gameObject, 2f);
             RectTransform tabs = MakeObject("Navigation", card, typeof(HorizontalLayoutGroup));
             tabs.anchorMin = new Vector2(0.02f, 0.89f); tabs.anchorMax = new Vector2(0.98f, 0.98f);
             tabs.offsetMin = tabs.offsetMax = Vector2.zero;
             HorizontalLayoutGroup row = tabs.GetComponent<HorizontalLayoutGroup>();
             row.spacing = 4f; row.childForceExpandWidth = true; row.childForceExpandHeight = true;
-            string[] names = { "Hull", "Fleet", "Contracts", "Upgrades", "Settings", "Help" };
-            for (int i = 0; i < names.Length; i++)
+            tabButtons = new Button[pageNames.Length];
+            for (int i = 0; i < pageNames.Length; i++)
             {
                 int requested = i;
-                MakeButton(names[i], tabs, () => { page = requested; BuildPage(); }, 44f, 15);
+                tabButtons[i] = MakeButton(pageNames[i] + "  [" + pageKeys[i] + "]", tabs, () => { page = requested; BuildPage(); }, 44f, 17);
+                tabButtons[i].name = pageNames[i]; // Stable object path for the play checks.
             }
             RectTransform viewport = MakeObject("Scroll View", card, typeof(Image), typeof(Mask), typeof(ScrollRect));
             viewport.anchorMin = new Vector2(0.03f, 0.11f); viewport.anchorMax = new Vector2(0.97f, 0.87f);
             viewport.offsetMin = viewport.offsetMax = Vector2.zero;
-            viewport.GetComponent<Image>().color = new Color(0.03f, 0.1f, 0.13f);
+            viewport.GetComponent<Image>().color = BoatshipsUI.PanelLight;
             viewport.GetComponent<Mask>().showMaskGraphic = true;
             RectTransform body = MakeObject("Content", viewport, typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
             body.anchorMin = new Vector2(0f, 1f); body.anchorMax = Vector2.one; body.pivot = new Vector2(0.5f, 1f);
@@ -107,7 +116,7 @@ namespace Boatships
             ScrollRect scroll = viewport.GetComponent<ScrollRect>();
             scroll.content = body; scroll.viewport = viewport; scroll.horizontal = false;
             content = body;
-            RectTransform close = MakeButton("Return to game", card, Toggle, 54f).GetComponent<RectTransform>();
+            RectTransform close = MakeButton("Return to game  [Esc]", card, Toggle, 54f).GetComponent<RectTransform>();
             close.anchorMin = new Vector2(0.25f, 0.02f); close.anchorMax = new Vector2(0.75f, 0.09f);
             close.offsetMin = close.offsetMax = Vector2.zero;
             backdrop.SetActive(false);
@@ -148,7 +157,7 @@ namespace Boatships
         {
             mainMenu = MakeObject("Boatships Main Menu", presentation.SafeRoot, typeof(Image)).gameObject;
             Stretch(mainMenu.GetComponent<RectTransform>());
-            mainMenu.GetComponent<Image>().color = new Color(0.02f, 0.07f, 0.1f);
+            mainMenu.GetComponent<Image>().color = BoatshipsUI.Background;
             RectTransform panel = MakeObject("Start Panel", mainMenu.transform, typeof(VerticalLayoutGroup));
             panel.anchorMin = panel.anchorMax = new Vector2(0.5f, 0.5f);
             panel.sizeDelta = new Vector2(720f, 520f);
@@ -158,14 +167,14 @@ namespace Boatships
             layout.childForceExpandHeight = false;
             Text title = MakeLabel("BOATSHIPS", panel, 64);
             title.alignment = TextAnchor.MiddleCenter;
-            title.color = new Color(0.65f, 0.9f, 0.88f);
+            title.color = BoatshipsUI.Title;
             title.gameObject.AddComponent<LayoutElement>().preferredHeight = 110f;
             mainMenuInfo = MakeLabel("Preparing world…", panel, 24);
             mainMenuInfo.alignment = TextAnchor.MiddleCenter;
             mainMenuInfo.gameObject.AddComponent<LayoutElement>().preferredHeight = 48f;
             newGameButton = MakeButton("New Game", panel, StartNewGame, 86f, 30);
-            newGameButton.GetComponent<Image>().color = new Color(0.75f, 0.5f, 0.2f);
-            newGameButton.GetComponentInChildren<Text>().color = new Color(0.03f, 0.07f, 0.1f);
+            newGameButton.GetComponent<Image>().color = BoatshipsUI.Accent;
+            newGameButton.GetComponentInChildren<Text>().color = BoatshipsUI.Ink;
             continueButton = MakeButton("Continue", panel, ContinueGame, 76f, 28);
             mainMenuStatus = MakeLabel("", panel, 22);
             mainMenuStatus.alignment = TextAnchor.MiddleCenter;
@@ -217,7 +226,9 @@ namespace Boatships
             bool building = page == 0;
             card.anchorMin = building ? new Vector2(0.64f, 0.03f) : new Vector2(0.15f, 0.06f);
             card.anchorMax = new Vector2(0.98f, 0.94f); card.offsetMin = card.offsetMax = Vector2.zero;
-            backdrop.GetComponent<Image>().color = new Color(0.02f, 0.06f, 0.08f, building ? 0.12f : 0.85f);
+            backdrop.GetComponent<Image>().color = new Color(0.03f, 0.025f, 0.02f, building ? 0.12f : 0.82f);
+            for (int i = 0; tabButtons != null && i < tabButtons.Length; i++)
+                tabButtons[i].targetGraphic.color = i == page ? BoatshipsUI.Selected : BoatshipsUI.ButtonColor;
             detail = MakeLabel("", content, 22);
             detail.gameObject.AddComponent<LayoutElement>().preferredHeight = building ? 150f : 190f;
             if (page == 0)
@@ -258,8 +269,8 @@ namespace Boatships
                 }
                 MakeButton("Quality — " + new[] { "Low", "Medium", "High" }[presentation.Quality], content,
                     () => { presentation.CycleQuality(); BuildPage(); });
-                MakeButton("Frame rate — " + presentation.FrameRate, content,
-                    () => { presentation.ToggleFrameRate(); BuildPage(); });
+                MakeButton("Frame rate — " + (presentation.FrameRate > 0 ? presentation.FrameRate + " FPS" : "Unlimited"), content,
+                    () => { presentation.CycleFrameRate(); BuildPage(); });
                 MakeSlider("Audio Volume", 0f, 1f, presentation.Volume, false, presentation.SetVolume);
             }
             else
@@ -278,8 +289,24 @@ namespace Boatships
             nextRefresh = 0f;
         }
 
+        private void HandleHotkeys()
+        {
+            Keyboard keyboard = Keyboard.current;
+            if (keyboard == null || backdrop == null || mainMenu == null || mainMenu.activeSelf) return;
+            if (BoatshipsDebugMenu.IsOpen || BoatshipsUI.Typing) return;
+            if (creation != null && creation.IsOpen) return;
+            if (!open && view != null && view.MenuOpen) return; // Story menus need an explicit choice.
+            if (keyboard.escapeKey.wasPressedThisFrame) { if (open) Toggle(); else OpenCampaignPage(SettingsPage); return; }
+            if (keyboard.hKey.wasPressedThisFrame) OpenCampaignPage(HullPage);
+            else if (keyboard.lKey.wasPressedThisFrame) OpenCampaignPage(FleetPage);
+            else if (keyboard.jKey.wasPressedThisFrame) OpenCampaignPage(ContractsPage);
+            else if (keyboard.uKey.wasPressedThisFrame) OpenCampaignPage(UpgradesPage);
+            else if (keyboard.f1Key.wasPressedThisFrame) OpenCampaignPage(HelpPage);
+        }
+
         private void Update()
         {
+            HandleHotkeys();
             if (mainMenu != null && mainMenu.activeSelf)
             {
                 newGameButton.interactable = saves.IsReady;
@@ -324,7 +351,7 @@ namespace Boatships
         private Text MakeLabel(string text, Transform parent, int size)
         {
             Text label = MakeObject("Label", parent, typeof(Text)).GetComponent<Text>();
-            label.font = font; label.fontSize = size; label.color = Color.white;
+            label.font = font; label.fontSize = size; label.color = BoatshipsUI.TextColor;
             label.text = text; label.alignment = TextAnchor.MiddleLeft; label.raycastTarget = false;
             return label;
         }
@@ -333,12 +360,13 @@ namespace Boatships
         {
             RectTransform rect = MakeObject(title, parent, typeof(Image), typeof(Button), typeof(LayoutElement));
             rect.GetComponent<LayoutElement>().preferredHeight = height;
-            rect.GetComponent<Image>().color = new Color(0.12f, 0.32f, 0.39f);
+            rect.GetComponent<Image>().color = BoatshipsUI.ButtonColor;
             Button button = rect.GetComponent<Button>();
             button.targetGraphic = rect.GetComponent<Image>();
             button.onClick.AddListener(() => { presentation.Click(); action(); });
             Text label = MakeLabel(title, rect, size); label.alignment = TextAnchor.MiddleCenter;
             Stretch(label.rectTransform);
+            BoatshipsUI.StyleButton(button);
             return button;
         }
 
@@ -348,9 +376,9 @@ namespace Boatships
             caption.gameObject.AddComponent<LayoutElement>().preferredHeight = 28f;
             RectTransform rect = MakeObject(label, content, typeof(Image), typeof(Slider), typeof(LayoutElement));
             rect.GetComponent<LayoutElement>().preferredHeight = 42f;
-            rect.GetComponent<Image>().color = new Color(0.16f, 0.3f, 0.35f);
+            rect.GetComponent<Image>().color = BoatshipsUI.ButtonColor;
             RectTransform handle = MakeObject("Handle", rect, typeof(Image));
-            handle.sizeDelta = new Vector2(28f, 42f); handle.GetComponent<Image>().color = new Color(0.6f, 0.85f, 0.85f);
+            handle.sizeDelta = new Vector2(28f, 42f); handle.GetComponent<Image>().color = BoatshipsUI.Accent;
             Slider slider = rect.GetComponent<Slider>(); slider.handleRect = handle;
             slider.targetGraphic = handle.GetComponent<Image>(); slider.minValue = min; slider.maxValue = max;
             slider.wholeNumbers = integer; slider.value = value;

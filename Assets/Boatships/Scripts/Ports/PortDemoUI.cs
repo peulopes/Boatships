@@ -82,7 +82,50 @@ namespace Boatships
                     actionLabels[i] = actionButtons[i].GetComponentInChildren<Text>(true);
             }
             BoatshipsDebugMenu.Register(this, jumpToMission, vicinityPanel.transform.Find("JumpButton"));
+            ApplyLayout();
             Refresh(true);
+        }
+
+        /// <summary>PC layout: a compact dock prompt above the weapon bar, the quest tracker top-left,
+        /// and the shared Bannerlord-style button skin on every port control.</summary>
+        private void ApplyLayout()
+        {
+            if (vicinityPanel != null)
+            {
+                RectTransform panel = (RectTransform)vicinityPanel.transform;
+                BoatshipsUI.Place(panel, new Vector2(0.5f, 0f), new Vector2(0f, 172f), new Vector2(620f, 76f));
+                Image image = vicinityPanel.GetComponent<Image>();
+                if (image != null) { image.color = BoatshipsUI.Panel; BoatshipsUI.Frame(vicinityPanel, 2f); }
+                if (nearbyText != null)
+                {
+                    BoatshipsUI.Anchor(nearbyText.rectTransform, 0.03f, 0.06f, 0.66f, 0.94f);
+                    nearbyText.fontSize = 19;
+                    nearbyText.color = BoatshipsUI.TextColor;
+                }
+                if (dockButton != null)
+                {
+                    BoatshipsUI.Anchor((RectTransform)dockButton.transform, 0.68f, 0.16f, 0.97f, 0.84f);
+                    Text label = dockButton.GetComponentInChildren<Text>(true);
+                    if (label != null) label.text = "Dock  [E]";
+                }
+            }
+            if (missionTracker != null)
+            {
+                RectTransform tracker = (RectTransform)missionTracker.transform.parent;
+                BoatshipsUI.Place(tracker, new Vector2(0f, 1f), new Vector2(16f, -16f), new Vector2(460f, 200f));
+                Image image = tracker.GetComponent<Image>();
+                if (image != null) { image.color = BoatshipsUI.Panel; BoatshipsUI.Frame(tracker.gameObject, 2f); }
+                BoatshipsUI.Stretch(missionTracker.rectTransform);
+                missionTracker.rectTransform.offsetMin = new Vector2(14f, 10f);
+                missionTracker.rectTransform.offsetMax = new Vector2(-14f, -10f);
+                missionTracker.fontSize = 18;
+                missionTracker.color = BoatshipsUI.TextColor;
+            }
+            foreach (Button button in GetComponentsInChildren<Button>(true)) BoatshipsUI.StyleButton(button);
+            Transform content = overlay != null ? overlay.transform.Find("Content") : null;
+            Image card = content != null ? content.GetComponent<Image>() : null;
+            if (card != null) { card.color = BoatshipsUI.Panel; BoatshipsUI.Frame(card.gameObject, 2f); }
+            if (headingText != null) headingText.color = BoatshipsUI.Title;
         }
 
         private GameObject Find(string path)
@@ -119,7 +162,8 @@ namespace Boatships
             if (docking == null || economy == null) return;
             bool docked = docking.IsDocked;
             bool shipyard = docked && docking.ViewingShipyard;
-            SetVisible(vicinityPanel, !docked);
+            // Only prompt when a harbor is actually close, instead of a permanent bottom bar.
+            SetVisible(vicinityPanel, !docked && docking.HasPort && (docking.CanDock || docking.DistanceToPort < 150f));
             SetVisible(overlay, docked && !shipyard);
             SetVisible(shipyardReturn, shipyard);
             if (missions != null)
@@ -132,8 +176,8 @@ namespace Boatships
             {
                 string name = docking.HasPort ?
                     "Port " + docking.NearestPort.Cell.x + "," + docking.NearestPort.Cell.y : "No port";
-                nearbyText.text = name + " | Distance " + docking.DistanceToPort.ToString("0") + " m\n" +
-                    (docking.CanDock ? "Ready to dock (E)" : "Sail toward port, or use test jump (O)");
+                nearbyText.text = name + "  —  " + docking.DistanceToPort.ToString("0") + " m\n" +
+                    (docking.CanDock ? "Ready to dock" : "Sail closer to dock");
             }
             if (dockButton != null) dockButton.interactable = docking.CanDock;
             if (!docked || shipyard) return;

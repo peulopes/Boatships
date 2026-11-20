@@ -51,7 +51,7 @@ namespace Boatships
             BoatshipsWorldMapView view = host.AddComponent<BoatshipsWorldMapView>();
             view.Configure(travel, director.World, hud);
             BoatshipsCharacterCreation creation = host.AddComponent<BoatshipsCharacterCreation>();
-            if (hud != null) hud.BindVoyage(character, creation);
+            if (hud != null) hud.BindVoyage(character, creation, view);
 
             // First-person layer: port towns, battles aboard AI ships, and boarding actions.
             BoatshipsFirstPerson firstPerson = host.AddComponent<BoatshipsFirstPerson>();
@@ -63,6 +63,11 @@ namespace Boatships
             BoatshipsBoarding boarding = Object.FindAnyObjectByType<BoatshipsBoarding>();
             if (boarding != null)
                 host.AddComponent<BoatshipsBoardingFirstPerson>().Configure(boarding, firstPerson, travel, flagship.transform);
+
+            // PC sailing HUD: ship status card and the crew drawer (P).
+            BoatshipsSailingHud sailing = host.AddComponent<BoatshipsSailingHud>();
+            sailing.Configure(presentation, hud, view, travel, docking, economy, flagship);
+            view.BindSailingHud(sailing);
         }
     }
 }

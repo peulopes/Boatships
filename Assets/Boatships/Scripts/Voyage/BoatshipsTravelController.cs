@@ -386,7 +386,7 @@ namespace Boatships
             economy.TryCampaignChange(progress => { if (!progress.discovered.Contains(cell)) progress.discovered.Add(cell); });
             welcomeMessage = character.Name + " the " + CharacterBackgrounds.Get(character.Profile.background).Title +
                 " — your story begins here, in " + BoatshipsNames.Island(home) + ". " +
-                (character.OwnsShip ? "Your ship waits in the harbor. Tap the sea or an island on the map to set a course." :
+                (character.OwnsShip ? "Your ship waits in the harbor. Click the sea or an island on the map to set a course." :
                 "You have no ship. Find work aboard a vessel in the tavern, or book passage to another port.");
             Save();
         }
@@ -1393,7 +1393,7 @@ namespace Boatships
             if (!Captain) return;
             PlaceShip(Coast(site, state.position, 14f), site.Center);
             EnterLocal(TravelMode.Island, site, true);
-            if (!raid) { Notify("Exploring the coast of " + BoatshipsNames.Island(site) + ". Tap World Map to set sail again."); return; }
+            if (!raid) { Notify("Exploring the coast of " + BoatshipsNames.Island(site) + ". Press M (World Map) to set sail again."); return; }
             int tier = Mathf.Clamp(CampaignTier() + 1, 1, 5);
             var kinds = new List<EncounterKind> { EncounterKind.Raider, EncounterKind.Brig };
             if (tier >= 4) kinds.Add(EncounterKind.Raider);

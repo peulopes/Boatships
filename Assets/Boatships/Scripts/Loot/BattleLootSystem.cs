@@ -98,7 +98,7 @@ namespace Boatships
             Keyboard keyboard = Keyboard.current;
             if (keyboard != null)
             {
-                if (keyboard.cKey.wasPressedThisFrame) CollectNearby();
+                if (keyboard.fKey.wasPressedThisFrame && !BoatshipsUI.Typing) CollectNearby();
                 if (BoatshipsDebugMenu.IsOpen && keyboard.yKey.wasPressedThisFrame) JumpToEncounterForTesting();
             }
         }

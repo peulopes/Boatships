@@ -27,6 +27,9 @@ namespace Boatships
         public int FrameRate { get; private set; }
         public float Volume { get; private set; }
         public float AverageFrameMilliseconds { get; private set; }
+        /// <summary>PC frame-rate caps; 0 means uncapped.</summary>
+        private static readonly int[] FrameRates = { 30, 60, 120, 0 };
+        private const string FrameRateKey = "Boatships.FPS.PC";
 
         public void Configure(Canvas ui, OceanWaves waves, WeaponGroupCombat guns, ShipCombatTarget flagship)
         { canvas = ui; ocean = waves; weapons = guns; player = flagship; }
@@ -34,7 +37,8 @@ namespace Boatships
         private IEnumerator Start()
         {
             Quality = Mathf.Clamp(PlayerPrefs.GetInt("Boatships.Quality", 1), 0, 2);
-            FrameRate = PlayerPrefs.GetInt("Boatships.FPS", 30) == 60 ? 60 : 30;
+            FrameRate = PlayerPrefs.GetInt(FrameRateKey, 60);
+            if (System.Array.IndexOf(FrameRates, FrameRate) < 0) FrameRate = 60;
             Volume = Mathf.Clamp01(PlayerPrefs.GetFloat("Boatships.Volume", 0.6f));
             previousPipeline = QualitySettings.renderPipeline;
             if (GraphicsSettings.currentRenderPipeline is UniversalRenderPipelineAsset source)
@@ -74,13 +78,17 @@ namespace Boatships
         }
 
         public void CycleQuality() { Quality = (Quality + 1) % 3; ApplySettings(); }
-        public void ToggleFrameRate() { FrameRate = FrameRate == 30 ? 60 : 30; ApplySettings(); }
+        public void CycleFrameRate()
+        {
+            FrameRate = FrameRates[(System.Array.IndexOf(FrameRates, FrameRate) + 1) % FrameRates.Length];
+            ApplySettings();
+        }
         public void SetVolume(float value) { Volume = Mathf.Clamp01(value); ApplySettings(); }
         public void Click() { if (effects != null) effects.PlayOneShot(clickClip, 0.3f); }
 
         private void ApplySettings()
         {
-            Application.targetFrameRate = FrameRate;
+            Application.targetFrameRate = FrameRate > 0 ? FrameRate : -1;
             QualitySettings.vSyncCount = 0;
             QualitySettings.shadowDistance = Quality == 0 ? 0f : Quality == 1 ? 45f : 85f;
             if (pipeline != null) pipeline.renderScale = Quality == 0 ? 0.7f : Quality == 1 ? 0.85f : 1f;
@@ -92,7 +100,7 @@ namespace Boatships
             if (ambience != null) ambience.volume = Volume * 0.25f;
             if (effects != null) effects.volume = Volume;
             PlayerPrefs.SetInt("Boatships.Quality", Quality);
-            PlayerPrefs.SetInt("Boatships.FPS", FrameRate);
+            PlayerPrefs.SetInt(FrameRateKey, FrameRate);
             PlayerPrefs.SetFloat("Boatships.Volume", Volume);
             PlayerPrefs.Save();
         }

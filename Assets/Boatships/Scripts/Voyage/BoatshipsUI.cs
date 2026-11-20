@@ -11,13 +11,19 @@ namespace Boatships
         private static Sprite circle;
         private static Sprite triangle;
 
+        // Bannerlord-inspired palette: dark leather panels, worn gold trim, parchment text.
         public static readonly Color Background = new Color(0.02f, 0.07f, 0.1f, 1f);
-        public static readonly Color Panel = new Color(0.04f, 0.12f, 0.16f, 0.97f);
-        public static readonly Color ButtonColor = new Color(0.12f, 0.32f, 0.39f);
-        public static readonly Color Selected = new Color(0.2f, 0.55f, 0.6f);
-        public static readonly Color Accent = new Color(0.75f, 0.5f, 0.2f);
-        public static readonly Color Ink = new Color(0.03f, 0.07f, 0.1f);
-        public static readonly Color Title = new Color(0.65f, 0.9f, 0.88f);
+        public static readonly Color Panel = new Color(0.075f, 0.062f, 0.05f, 0.94f);
+        public static readonly Color PanelLight = new Color(0.12f, 0.1f, 0.075f, 0.92f);
+        public static readonly Color ButtonColor = new Color(0.23f, 0.18f, 0.12f);
+        public static readonly Color Selected = new Color(0.5f, 0.37f, 0.18f);
+        public static readonly Color Accent = new Color(0.78f, 0.6f, 0.3f);
+        public static readonly Color Danger = new Color(0.58f, 0.16f, 0.12f);
+        public static readonly Color Border = new Color(0.66f, 0.5f, 0.27f, 0.85f);
+        public static readonly Color Ink = new Color(0.08f, 0.06f, 0.04f);
+        public static readonly Color Title = new Color(0.95f, 0.85f, 0.62f);
+        public static readonly Color TextColor = new Color(0.93f, 0.9f, 0.82f);
+        public static readonly Color Muted = new Color(0.72f, 0.65f, 0.52f);
 
         /// <summary>Optional click feedback (wired to the mobile presentation's click sound).</summary>
         public static Action ClickSound;
@@ -77,7 +83,7 @@ namespace Boatships
         public static Text Label(string text, Transform parent, int size, TextAnchor alignment = TextAnchor.MiddleLeft)
         {
             Text label = Rect("Label", parent, typeof(Text)).GetComponent<Text>();
-            label.font = Font; label.fontSize = size; label.color = Color.white;
+            label.font = Font; label.fontSize = size; label.color = TextColor;
             label.text = text; label.alignment = alignment; label.raycastTarget = false;
             label.horizontalOverflow = HorizontalWrapMode.Wrap;
             label.verticalOverflow = VerticalWrapMode.Truncate;
@@ -99,12 +105,79 @@ namespace Boatships
             image.color = ButtonColor;
             Button button = rect.GetComponent<Button>();
             button.targetGraphic = image;
+            StyleButton(button);
             button.onClick.AddListener(() => { ClickSound?.Invoke(); action?.Invoke(); });
             Text label = Label(title, rect, size, TextAnchor.MiddleCenter);
             Stretch(label.rectTransform);
             label.rectTransform.offsetMin = new Vector2(8f, 2f);
             label.rectTransform.offsetMax = new Vector2(-8f, -2f);
             return button;
+        }
+
+        /// <summary>Hover/press tints and a thin gold frame, applied to every button (including scene-built ones).</summary>
+        public static void StyleButton(Button button, Color? fill = null)
+        {
+            if (button == null) return;
+            Image image = button.targetGraphic as Image;
+            if (image == null) image = button.GetComponent<Image>();
+            if (image != null)
+            {
+                if (fill.HasValue) image.color = fill.Value;
+                Frame(image.gameObject, 1f);
+            }
+            ColorBlock colors = button.colors;
+            colors.normalColor = Color.white;
+            colors.highlightedColor = new Color(1.45f, 1.35f, 1.2f, 1f);
+            colors.selectedColor = Color.white;
+            colors.pressedColor = new Color(0.8f, 0.75f, 0.7f, 1f);
+            colors.disabledColor = new Color(0.55f, 0.55f, 0.55f, 0.6f);
+            colors.colorMultiplier = 1f;
+            colors.fadeDuration = 0.08f;
+            button.colors = colors;
+            Navigation navigation = button.navigation;
+            navigation.mode = Navigation.Mode.None; // Keyboard keys are hotkeys, not menu navigation.
+            button.navigation = navigation;
+            foreach (Text text in button.GetComponentsInChildren<Text>(true))
+                if (text.color == Color.white) text.color = TextColor;
+        }
+
+        /// <summary>Gold outline used for panels and buttons.</summary>
+        public static void Frame(GameObject target, float width)
+        {
+            Outline outline = target.GetComponent<Outline>();
+            if (outline == null) outline = target.AddComponent<Outline>();
+            outline.effectColor = Border;
+            outline.effectDistance = new Vector2(width, -width);
+        }
+
+        /// <summary>A framed dark panel anchored at a screen corner/edge, sized in reference (1920x1080) units.</summary>
+        public static Image FramedPanel(string name, Transform parent, Vector2 anchor, Vector2 position, Vector2 size)
+        {
+            Image image = Image(name, parent, Panel);
+            Frame(image.gameObject, 2f);
+            Place(image.rectTransform, anchor, position, size);
+            return image;
+        }
+
+        /// <summary>Anchors and pivots a rect at the same normalized point, then offsets and sizes it.</summary>
+        public static void Place(RectTransform rect, Vector2 anchor, Vector2 position, Vector2 size)
+        {
+            rect.anchorMin = rect.anchorMax = anchor;
+            rect.pivot = anchor;
+            rect.sizeDelta = size;
+            rect.anchoredPosition = position;
+        }
+
+        /// <summary>True while a text field has keyboard focus, so hotkeys must not fire.</summary>
+        public static bool Typing
+        {
+            get
+            {
+                UnityEngine.EventSystems.EventSystem events = UnityEngine.EventSystems.EventSystem.current;
+                GameObject selected = events != null ? events.currentSelectedGameObject : null;
+                InputField field = selected != null ? selected.GetComponent<InputField>() : null;
+                return field != null && field.isFocused;
+            }
         }
 
         public static void SetButton(Button button, string title, bool interactable)

@@ -145,6 +145,12 @@ namespace Boatships
             RefreshCannons();
         }
 
+        private void Awake()
+        {
+            // PC build: aiming uses the arrow keys; the prototype touch stick is never shown.
+            if (aimJoystick != null) aimJoystick.gameObject.SetActive(false);
+        }
+
         private void Update()
         {
             if (hull == null) return;
@@ -169,11 +175,11 @@ namespace Boatships
                 if (kb.spaceKey.isPressed) FireSelectedGroup();
             }
 
-            Vector2 aim = aimJoystick != null ? aimJoystick.Direction : Vector2.zero;
+            Vector2 aim = Vector2.zero;
             if (kb != null)
             {
-                aim.x += (kb.lKey.isPressed ? 1f : 0f) - (kb.jKey.isPressed ? 1f : 0f);
-                aim.y += (kb.iKey.isPressed ? 1f : 0f) - (kb.kKey.isPressed ? 1f : 0f);
+                aim.x += (kb.rightArrowKey.isPressed ? 1f : 0f) - (kb.leftArrowKey.isPressed ? 1f : 0f);
+                aim.y += (kb.upArrowKey.isPressed ? 1f : 0f) - (kb.downArrowKey.isPressed ? 1f : 0f);
             }
             aim = Vector2.ClampMagnitude(aim, 1f);
             bearingDeg = Mathf.Clamp(bearingDeg + aim.x * 55f * Time.deltaTime,

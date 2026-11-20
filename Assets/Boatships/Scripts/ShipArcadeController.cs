@@ -47,21 +47,18 @@ namespace Boatships
             body.isKinematic = true;
             body.useGravity = false;
             body.interpolation = RigidbodyInterpolation.Interpolate;
+            // PC build: the on-screen touch stick from the prototype scenes is never shown.
+            if (moveJoystick != null) moveJoystick.gameObject.SetActive(false);
         }
 
         private Vector2 ReadMoveInput()
         {
-            Vector2 input = moveJoystick != null ? moveJoystick.Direction : Vector2.zero;
-            // Desktop editor testing: WASD / arrow keys. Touch input takes priority.
-            if (input.sqrMagnitude > 0.0025f) return input;
-
+            // WASD steers; the arrow keys are reserved for cannon aim (WeaponGroupCombat).
             Keyboard kb = Keyboard.current;
-            if (kb == null) return Vector2.zero;
+            if (kb == null || BoatshipsUI.Typing) return Vector2.zero;
 
-            float x = (kb.dKey.isPressed || kb.rightArrowKey.isPressed ? 1f : 0f)
-                    - (kb.aKey.isPressed || kb.leftArrowKey.isPressed ? 1f : 0f);
-            float y = (kb.wKey.isPressed || kb.upArrowKey.isPressed ? 1f : 0f)
-                    - (kb.sKey.isPressed || kb.downArrowKey.isPressed ? 1f : 0f);
+            float x = (kb.dKey.isPressed ? 1f : 0f) - (kb.aKey.isPressed ? 1f : 0f);
+            float y = (kb.wKey.isPressed ? 1f : 0f) - (kb.sKey.isPressed ? 1f : 0f);
             return Vector2.ClampMagnitude(new Vector2(x, y), 1f);
         }
 

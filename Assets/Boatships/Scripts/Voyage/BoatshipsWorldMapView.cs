@@ -45,7 +45,9 @@ namespace Boatships
         private Text statusText;
         private Text messageText;
         private Button pauseButton;
-        private Button speedButton;
+        private readonly Button[] speedButtons = new Button[3];
+        private static readonly float[] Speeds = { 1f, 2f, 4f };
+        private Text clockText;
         private Button enterButton;
         private GameObject selection;
         private Text selectionTitle;
@@ -58,6 +60,7 @@ namespace Boatships
         private Button leaveButton;
         private Button abandonButton;
         private Text localText;
+        private BoatshipsSailingHud sailingHud;
         private readonly List<RectTransform> islandMarkers = new List<RectTransform>();
         private readonly List<PartyMarker> partyMarkers = new List<PartyMarker>();
         private Vector2 worldMin;
@@ -122,34 +125,20 @@ namespace Boatships
             player = playerImage.rectTransform;
             playerImage.gameObject.AddComponent<Outline>().effectDistance = new Vector2(2f, -2f);
 
-            RectTransform bar = BoatshipsUI.Image("Top Bar", safe, BoatshipsUI.Panel).rectTransform;
-            bar.anchorMin = new Vector2(0f, 1f); bar.anchorMax = Vector2.one; bar.pivot = new Vector2(0.5f, 1f);
-            bar.offsetMin = new Vector2(0f, -78f); bar.offsetMax = Vector2.zero;
-            statusText = BoatshipsUI.Label("", bar, 22);
-            BoatshipsUI.Anchor(statusText.rectTransform, 0.01f, 0f, 0.55f, 1f);
-            RectTransform buttons = BoatshipsUI.Rect("Buttons", bar, typeof(HorizontalLayoutGroup));
-            BoatshipsUI.Anchor(buttons, 0.56f, 0.1f, 0.995f, 0.9f);
-            HorizontalLayoutGroup row = buttons.GetComponent<HorizontalLayoutGroup>();
-            row.spacing = 6f; row.childControlWidth = true; row.childControlHeight = true;
-            row.childForceExpandWidth = true; row.childForceExpandHeight = true;
-            pauseButton = BoatshipsUI.Button("Pause", buttons, () => travel.Paused = !travel.Paused, 60f, 20);
-            speedButton = BoatshipsUI.Button("Speed x1", buttons, CycleSpeed, 60f, 20);
-            BoatshipsUI.Button("Center", buttons, () => follow = true, 60f, 20);
-            BoatshipsUI.Button("Character", buttons, () => travel.CharacterSheet(null), 60f, 20);
-            BoatshipsUI.Button("Menu", buttons, () => { if (hud != null) hud.OpenCampaignMenu(); }, 60f, 20);
+            BuildCampaignBar(safe);
 
             messageText = BoatshipsUI.Label("", safe, 24, TextAnchor.MiddleCenter);
             RectTransform message = messageText.rectTransform;
-            message.anchorMin = new Vector2(0.15f, 1f); message.anchorMax = new Vector2(0.85f, 1f);
+            message.anchorMin = new Vector2(0.2f, 1f); message.anchorMax = new Vector2(0.8f, 1f);
             message.pivot = new Vector2(0.5f, 1f);
-            message.offsetMin = new Vector2(0f, -170f); message.offsetMax = new Vector2(0f, -86f);
+            message.offsetMin = new Vector2(0f, -110f); message.offsetMax = new Vector2(0f, -20f);
             messageText.gameObject.AddComponent<Shadow>().effectDistance = new Vector2(2f, -2f);
 
-            enterButton = BoatshipsUI.Button("Enter", safe, () => travel.OpenCurrentIslandMenu(), 70f, 24);
-            RectTransform enter = (RectTransform)enterButton.transform;
-            enter.anchorMin = enter.anchorMax = new Vector2(1f, 0f); enter.pivot = new Vector2(1f, 0f);
-            enter.sizeDelta = new Vector2(420f, 76f); enter.anchoredPosition = new Vector2(-24f, 24f);
-            enterButton.GetComponent<Image>().color = BoatshipsUI.Accent;
+            // Context action sits just above the campaign bar, centred, like Bannerlord's settlement prompt.
+            enterButton = BoatshipsUI.Button("Enter", safe, () => travel.OpenCurrentIslandMenu(), 64f, 24);
+            BoatshipsUI.Place((RectTransform)enterButton.transform, new Vector2(0.5f, 0f), new Vector2(0f, 112f), new Vector2(460f, 60f));
+            BoatshipsUI.StyleButton(enterButton, BoatshipsUI.Accent);
+            enterButton.GetComponentInChildren<Text>().color = BoatshipsUI.Ink;
 
             BuildSelection(safe);
             // Menus live on their own canvas so towns, battles and the map can all use them.
@@ -157,6 +146,51 @@ namespace Boatships
             BuildMenu(BoatshipsUI.SafeArea(menuCanvas));
             BuildLocalHud();
         }
+
+        /// <summary>Bottom strip: party summary (left), date and time controls (centre), screens (right).</summary>
+        private void BuildCampaignBar(RectTransform safe)
+        {
+            Image barImage = BoatshipsUI.Image("Campaign Bar", safe, BoatshipsUI.Panel);
+            BoatshipsUI.Frame(barImage.gameObject, 2f);
+            RectTransform bar = barImage.rectTransform;
+            bar.anchorMin = Vector2.zero; bar.anchorMax = new Vector2(1f, 0f); bar.pivot = new Vector2(0.5f, 0f);
+            bar.offsetMin = Vector2.zero; bar.offsetMax = new Vector2(0f, 92f);
+
+            statusText = BoatshipsUI.Label("", bar, 21);
+            BoatshipsUI.Anchor(statusText.rectTransform, 0.012f, 0.08f, 0.36f, 0.92f);
+
+            RectTransform time = BoatshipsUI.Image("Time Controls", bar, BoatshipsUI.PanelLight).rectTransform;
+            BoatshipsUI.Frame(time.gameObject, 1f);
+            time.anchorMin = time.anchorMax = new Vector2(0.5f, 0.5f);
+            time.sizeDelta = new Vector2(500f, 76f);
+            clockText = BoatshipsUI.Label("", time, 20, TextAnchor.MiddleCenter);
+            clockText.color = BoatshipsUI.Title;
+            BoatshipsUI.Anchor(clockText.rectTransform, 0f, 0.56f, 1f, 1f);
+            RectTransform timeRow = BoatshipsUI.Rect("Speeds", time, typeof(HorizontalLayoutGroup));
+            BoatshipsUI.Anchor(timeRow, 0.03f, 0.08f, 0.97f, 0.56f);
+            HorizontalLayoutGroup timeLayout = timeRow.GetComponent<HorizontalLayoutGroup>();
+            timeLayout.spacing = 6f; timeLayout.childControlWidth = timeLayout.childControlHeight = true;
+            timeLayout.childForceExpandWidth = timeLayout.childForceExpandHeight = true;
+            pauseButton = BoatshipsUI.Button("|| Pause  [Space]", timeRow, () => travel.Paused = !travel.Paused, 34f, 16);
+            for (int i = 0; i < Speeds.Length; i++)
+            {
+                float speed = Speeds[i];
+                speedButtons[i] = BoatshipsUI.Button(new string('>', i + 1) + " x" + speed.ToString("0") + "  [" + (i + 1) + "]",
+                    timeRow, () => SetSpeed(speed), 34f, 16);
+            }
+
+            RectTransform screens = BoatshipsUI.Rect("Screens", bar, typeof(HorizontalLayoutGroup));
+            BoatshipsUI.Anchor(screens, 0.64f, 0.16f, 0.992f, 0.84f);
+            HorizontalLayoutGroup screenLayout = screens.GetComponent<HorizontalLayoutGroup>();
+            screenLayout.spacing = 6f; screenLayout.childControlWidth = screenLayout.childControlHeight = true;
+            screenLayout.childForceExpandWidth = screenLayout.childForceExpandHeight = true;
+            BoatshipsUI.Button("Center  [Home]", screens, () => follow = true, 56f, 17);
+            BoatshipsUI.Button("Character  [C]", screens, () => travel.CharacterSheet(null), 56f, 17);
+            BoatshipsUI.Button("Contracts  [J]", screens, () => { if (hud != null) hud.OpenCampaignPage(BoatshipsCampaignHUD.ContractsPage); }, 56f, 17);
+            BoatshipsUI.Button("Menu  [Esc]", screens, () => { if (hud != null) hud.OpenCampaignPage(BoatshipsCampaignHUD.SettingsPage); }, 56f, 17);
+        }
+
+        private void SetSpeed(float speed) { travel.TimeSpeed = speed; travel.Paused = false; }
 
         private RectTransform Layer(string name)
         {
@@ -179,14 +213,16 @@ namespace Boatships
         {
             RectTransform panel = BoatshipsUI.Image("Selection", safe, BoatshipsUI.Panel).rectTransform;
             panel.anchorMin = panel.anchorMax = Vector2.zero; panel.pivot = Vector2.zero;
-            panel.sizeDelta = new Vector2(640f, 250f); panel.anchoredPosition = new Vector2(24f, 24f);
+            panel.sizeDelta = new Vector2(600f, 240f); panel.anchoredPosition = new Vector2(16f, 108f);
+            BoatshipsUI.Frame(panel.gameObject, 2f);
             BoatshipsUI.Column(panel, 6f, 14);
             selectionTitle = BoatshipsUI.FixedLabel("", panel, 28, 40f);
             selectionTitle.color = BoatshipsUI.Title;
             selectionBody = BoatshipsUI.FixedLabel("", panel, 20, 104f, TextAnchor.UpperLeft);
             HorizontalLayoutGroup row = BoatshipsUI.Row(panel, 64f, 10f);
             selectionAction = BoatshipsUI.Button("Set sail", row.transform, SelectionAction, 64f, 22);
-            selectionAction.GetComponent<Image>().color = BoatshipsUI.Accent;
+            BoatshipsUI.StyleButton(selectionAction, BoatshipsUI.Accent);
+            selectionAction.GetComponentInChildren<Text>().color = BoatshipsUI.Ink;
             BoatshipsUI.Button("Close", row.transform, ClearSelection, 64f, 22);
             selection = panel.gameObject;
             selection.SetActive(false);
@@ -200,6 +236,7 @@ namespace Boatships
             RectTransform card = BoatshipsUI.Image("Card", dim.transform, BoatshipsUI.Panel).rectTransform;
             card.anchorMin = card.anchorMax = new Vector2(0.5f, 0.5f); card.pivot = new Vector2(0.5f, 0.5f);
             card.sizeDelta = new Vector2(1060f, 600f);
+            BoatshipsUI.Frame(card.gameObject, 2f);
             BoatshipsUI.Column(card, 12f, 26);
             card.gameObject.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
             menuTitle = BoatshipsUI.FixedLabel("", card, 36, 54f, TextAnchor.MiddleCenter);
@@ -215,22 +252,32 @@ namespace Boatships
         {
             localCanvas = BoatshipsUI.CreateCanvas("Boatships Voyage HUD", 5, transform);
             RectTransform safe = BoatshipsUI.SafeArea(localCanvas);
-            leaveButton = BoatshipsUI.Button("World Map", safe, () => travel.LeaveLocal(), 54f, 22);
-            RectTransform leave = (RectTransform)leaveButton.transform;
-            leave.anchorMin = leave.anchorMax = new Vector2(0.5f, 1f); leave.pivot = new Vector2(0f, 1f);
-            leave.sizeDelta = new Vector2(220f, 54f); leave.anchoredPosition = new Vector2(128f, -12f);
-            leaveButton.GetComponent<Image>().color = BoatshipsUI.Accent;
-            abandonButton = BoatshipsUI.Button("Abandon ship", safe, () => travel.AbandonShip(), 54f, 22);
-            RectTransform abandon = (RectTransform)abandonButton.transform;
-            abandon.anchorMin = abandon.anchorMax = new Vector2(0.5f, 1f); abandon.pivot = new Vector2(0f, 1f);
-            abandon.sizeDelta = new Vector2(220f, 54f); abandon.anchoredPosition = new Vector2(358f, -12f);
-            abandonButton.GetComponent<Image>().color = new Color(0.6f, 0.15f, 0.12f);
-            localText = BoatshipsUI.Label("", safe, 20, TextAnchor.UpperCenter);
-            RectTransform text = localText.rectTransform;
-            text.anchorMin = new Vector2(0.25f, 1f); text.anchorMax = new Vector2(0.75f, 1f); text.pivot = new Vector2(0.5f, 1f);
-            text.offsetMin = new Vector2(0f, -150f); text.offsetMax = new Vector2(0f, -72f);
+            // Top-right screen buttons; every one also has a hotkey.
+            RectTransform row = BoatshipsUI.Rect("Screen Buttons", safe, typeof(HorizontalLayoutGroup));
+            BoatshipsUI.Place(row, Vector2.one, new Vector2(-16f, -16f), new Vector2(640f, 48f));
+            HorizontalLayoutGroup layout = row.GetComponent<HorizontalLayoutGroup>();
+            layout.spacing = 6f; layout.childControlWidth = layout.childControlHeight = true;
+            layout.childForceExpandWidth = layout.childForceExpandHeight = true;
+            leaveButton = BoatshipsUI.Button("World Map  [M]", row, () => travel.LeaveLocal(), 48f, 17);
+            BoatshipsUI.StyleButton(leaveButton, BoatshipsUI.Accent);
+            leaveButton.GetComponentInChildren<Text>().color = BoatshipsUI.Ink;
+            BoatshipsUI.Button("Crew  [P]", row, () => { if (sailingHud != null) sailingHud.ToggleCrew(); }, 48f, 17);
+            BoatshipsUI.Button("Character  [C]", row, () => travel.CharacterSheet(null), 48f, 17);
+            BoatshipsUI.Button("Menu  [Esc]", row, () => { if (hud != null) hud.OpenCampaignPage(BoatshipsCampaignHUD.SettingsPage); }, 48f, 17);
+
+            abandonButton = BoatshipsUI.Button("Abandon ship  [X]", safe, () => travel.AbandonShip(), 52f, 20);
+            BoatshipsUI.Place((RectTransform)abandonButton.transform, new Vector2(0.5f, 1f), new Vector2(0f, -118f), new Vector2(300f, 52f));
+            BoatshipsUI.StyleButton(abandonButton, BoatshipsUI.Danger);
+
+            // Battle / location banner, top centre. Text only, so it never blocks clicks.
+            localText = BoatshipsUI.Label("", safe, 22, TextAnchor.UpperCenter);
+            BoatshipsUI.Place(localText.rectTransform, new Vector2(0.5f, 1f), new Vector2(0f, -18f), new Vector2(580f, 96f));
+            localText.color = BoatshipsUI.Title;
             localText.gameObject.AddComponent<Shadow>().effectDistance = new Vector2(2f, -2f);
         }
+
+        /// <summary>Connects the sailing HUD so the Crew button can open its drawer.</summary>
+        public void BindSailingHud(BoatshipsSailingHud sailing) => sailingHud = sailing;
 
         // ───────────────────────────── Menus ─────────────────────────────
 
@@ -254,8 +301,6 @@ namespace Boatships
             menuRoot.transform.SetAsLastSibling();
         }
 
-        private void CycleSpeed() => travel.TimeSpeed = travel.TimeSpeed >= 4f ? 1f : travel.TimeSpeed * 2f;
-
         // ───────────────────────────── Frame update ─────────────────────────────
 
         private void Update()
@@ -266,6 +311,7 @@ namespace Boatships
             mapCanvas.enabled = onMap && !blocked;
             localCanvas.enabled = !onMap && !blocked && travel.Live && !travel.FirstPersonActive;
             menuCanvas.enabled = !blocked;
+            HandleHotkeys(onMap, blocked);
             if (!onMap) { UpdateLocalHud(); return; }
             if (blocked) return;
             if (textureSeed != world.Seed && world.IslandCount > 0) GenerateTerrain();
@@ -273,6 +319,25 @@ namespace Boatships
             HandlePinch();
             UpdateMarkers();
             if (Time.unscaledTime >= nextStatus) { nextStatus = Time.unscaledTime + 0.2f; UpdateTexts(); }
+        }
+
+        private void HandleHotkeys(bool onMap, bool blocked)
+        {
+            Keyboard keyboard = Keyboard.current;
+            if (keyboard == null || blocked || MenuOpen || !travel.Live || BoatshipsDebugMenu.IsOpen || BoatshipsUI.Typing) return;
+            if (keyboard.cKey.wasPressedThisFrame) { travel.CharacterSheet(null); return; }
+            if (onMap)
+            {
+                if (keyboard.spaceKey.wasPressedThisFrame) travel.Paused = !travel.Paused;
+                for (int i = 0; i < Speeds.Length; i++)
+                    if (keyboard[Key.Digit1 + i].wasPressedThisFrame) SetSpeed(Speeds[i]);
+                if (keyboard.homeKey.wasPressedThisFrame) follow = true;
+                if (keyboard.eKey.wasPressedThisFrame && enterButton.gameObject.activeSelf) travel.OpenCurrentIslandMenu();
+                return;
+            }
+            if (!localCanvas.enabled) return;
+            if (keyboard.mKey.wasPressedThisFrame && leaveButton.gameObject.activeSelf) travel.LeaveLocal();
+            if (keyboard.xKey.wasPressedThisFrame && abandonButton.gameObject.activeSelf) travel.AbandonShip();
         }
 
         private void UpdateLocalHud()
@@ -293,15 +358,19 @@ namespace Boatships
             PortEconomy economy = travel.Economy;
             BoatshipsCharacter character = travel.Character;
             string role = travel.OnJob ? "Aboard a ship — in transit" : character.OwnsShip ? "Captain" : "No ship";
-            statusText.text = character.Name + "   Day " + travel.Day + ", " + travel.Hour.ToString("00") + ":00\n" +
-                "Gold " + economy.Gold + "   Rations " + economy.Rations + "   Crew " + economy.Crew.Count + "   " + role;
-            BoatshipsUI.SetButton(pauseButton, travel.Paused ? "Resume" : "Pause", true);
-            BoatshipsUI.SetButton(speedButton, "Speed x" + travel.TimeSpeed.ToString("0"), true);
-            messageText.text = travel.HasMessage ? travel.Message : travel.Paused ? "Paused" : "";
+            statusText.text = "<color=#F2D99E>" + character.Name + "</color>  —  " + role + "\n" +
+                "Gold " + economy.Gold + "    Rations " + economy.Rations + "    Crew " + economy.Crew.Count;
+            clockText.text = "Day " + travel.Day + ",  " + travel.Hour.ToString("00") + ":00" + (travel.Paused ? "   —   PAUSED" : "");
+            BoatshipsUI.SetButton(pauseButton, travel.Paused ? "> Resume  [Space]" : "|| Pause  [Space]", true);
+            pauseButton.targetGraphic.color = travel.Paused ? BoatshipsUI.Selected : BoatshipsUI.ButtonColor;
+            for (int i = 0; i < Speeds.Length; i++)
+                speedButtons[i].targetGraphic.color = !travel.Paused && Mathf.Approximately(travel.TimeSpeed, Speeds[i])
+                    ? BoatshipsUI.Selected : BoatshipsUI.ButtonColor;
+            messageText.text = travel.HasMessage ? travel.Message : "";
             bool atIsland = travel.AtIsland(out ArchipelagoWorld.IslandSite here) && !travel.OnJob && !MenuOpen && !travel.HasTarget;
             enterButton.gameObject.SetActive(atIsland);
             if (atIsland) BoatshipsUI.SetButton(enterButton, (here.Kind == IslandKind.PortSite ? "Enter " : "Visit ") +
-                BoatshipsNames.Island(here), true);
+                BoatshipsNames.Island(here) + "  [E]", true);
             UpdateSelectionText();
         }
 

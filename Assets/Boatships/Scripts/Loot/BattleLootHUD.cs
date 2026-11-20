@@ -3,7 +3,7 @@ using UnityEngine.UI;
 
 namespace Boatships
 {
-    /// <summary>Touch collection for all floating loot, with range guidance and pickup confirmation.</summary>
+    /// <summary>Floating-loot card (right edge) with range guidance, pickup confirmation and the F hotkey.</summary>
     public sealed class BattleLootHUD : MonoBehaviour
     {
         [SerializeField] private BattleLootSystem loot;
@@ -31,21 +31,23 @@ namespace Boatships
                 collect.onClick.AddListener(Collect);
                 collectCaption = collect.GetComponentInChildren<Text>(true);
                 RectTransform rect = collect.GetComponent<RectTransform>();
-                rect.anchorMin = new Vector2(0.15f, 0.04f);
-                rect.anchorMax = new Vector2(0.85f, 0.34f);
+                rect.anchorMin = new Vector2(0.05f, 0.07f);
+                rect.anchorMax = new Vector2(0.95f, 0.36f);
                 rect.offsetMin = rect.offsetMax = Vector2.zero;
+                BoatshipsUI.StyleButton(collect, BoatshipsUI.Accent);
+                if (collectCaption != null) { collectCaption.color = BoatshipsUI.Ink; collectCaption.fontSize = 19; }
             }
             if (jump != null && loot != null) jump.onClick.AddListener(loot.JumpToEncounterForTesting);
-            // Keep this gameplay action above the lower control row, clear of the joysticks.
-            RectTransform root = GetComponent<RectTransform>();
-            root.anchorMin = root.anchorMax = new Vector2(0.5f, 0f);
-            root.pivot = new Vector2(0.5f, 0f);
-            root.anchoredPosition = new Vector2(0f, 180f);
-            root.sizeDelta = new Vector2(560f, 165f);
+            // Right edge, above the bottom HUD row and below the crew drawer.
+            BoatshipsUI.Place(GetComponent<RectTransform>(), new Vector2(1f, 0f), new Vector2(-16f, 200f), new Vector2(440f, 160f));
             if (status != null)
             {
                 panel = status.transform.parent.gameObject;
-                status.rectTransform.anchorMin = new Vector2(0.03f, 0.38f);
+                Image backing = panel.GetComponent<Image>();
+                if (backing != null) { backing.color = BoatshipsUI.Panel; BoatshipsUI.Frame(panel, 2f); }
+                status.fontSize = 18;
+                status.color = BoatshipsUI.TextColor;
+                status.rectTransform.anchorMin = new Vector2(0.04f, 0.4f);
                 status.rectTransform.anchorMax = new Vector2(0.97f, 0.98f);
                 status.rectTransform.offsetMin = status.rectTransform.offsetMax = Vector2.zero;
                 status.raycastTarget = false;
@@ -77,7 +79,7 @@ namespace Boatships
             {
                 collect.interactable = !docked && loot.CanCollect;
                 if (collectCaption != null)
-                    collectCaption.text = loot.CanCollect ? "Collect Loot" : loot.HasLoot ?
+                    collectCaption.text = loot.CanCollect ? "Collect loot  [F]" : loot.HasLoot ?
                         "Sail within " + loot.CollectRadius.ToString("0") + " m" : "Loot Collected";
             }
             if (jump != null) jump.gameObject.SetActive(!docked);
@@ -85,7 +87,7 @@ namespace Boatships
             status.enabled = true;
             status.text = loot.ShowCollectionFeedback ? loot.LastEvent + "\nGold " + economy.Gold + " | " + economy.StockSummary :
                 "FLOATING LOOT — " + loot.DistanceToLoot.ToString("0") + " m away\n" + loot.LootDescription +
-                "\n" + (loot.CanCollect ? "In range — tap Collect Loot." : "Sail closer to collect (within " + loot.CollectRadius.ToString("0") + " m).");
+                "\n" + (loot.CanCollect ? "In range — press F to collect." : "Sail closer to collect (within " + loot.CollectRadius.ToString("0") + " m).");
         }
 
         private void OnDestroy()

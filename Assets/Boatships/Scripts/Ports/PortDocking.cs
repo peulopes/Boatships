@@ -181,7 +181,7 @@ namespace Boatships
             Rigidbody body = ship.GetComponent<Rigidbody>();
             if (body != null) body.position = target;
             else ship.position = target;
-            Status = "Jumped to port coast (test shortcut). Press E or tap Dock.";
+            Status = "Jumped to port coast (test shortcut). Press E to dock.";
         }
     }
 }

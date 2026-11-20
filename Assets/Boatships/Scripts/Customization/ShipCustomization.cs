@@ -52,7 +52,7 @@ namespace Boatships
         public bool InShipyard { get; private set; } = true;
         public bool Removing => removeMode;
         public bool HullEditing { get; set; }
-        public string Status { get; private set; } = "Select equipment then tap a deck cell.";
+        public string Status { get; private set; } = "Select equipment then click a deck cell.";
         public int InstalledCount => installed.Count;
         public ShipEquipmentDefinition Cannon => cannon;
         public ShipEquipmentDefinition Storage => storage;
@@ -113,7 +113,7 @@ namespace Boatships
             // Starter equipment is free; charges only apply to subsequent placements.
             chargeForNewPlacements = inventory != null;
             SetShipyard(true);
-            Status = "Shipyard ready. Tap deck to place equipment; finish to sail.";
+            Status = "Shipyard ready. Click the deck to place equipment.";
         }
 
         public void SetShipyard(bool isOpen)
@@ -121,7 +121,7 @@ namespace Boatships
             InShipyard = isOpen;
             if (shipController != null) shipController.enabled = !isOpen;
             if (damageDemo != null) damageDemo.enabled = !isOpen;
-            Status = isOpen ? "Shipyard: select an item, then tap deck." : "Sailing. H or click hull to test damage.";
+            Status = isOpen ? "Shipyard: select an item, then click the deck." : "Sailing. H or click hull to test damage.";
         }
 
         public void ToggleShipyard() => SetShipyard(!InShipyard);
@@ -146,14 +146,14 @@ namespace Boatships
                     return;
                 }
                 if (RemoveHardpoint(socket.id))
-                    Status = definition.DisplayName + " removed. Tap button again to reinstall.";
+                    Status = definition.DisplayName + " removed. Click the button again to reinstall.";
                 else if (TryInstallHardpoint(definition, socket.id))
                     Status = definition.DisplayName + " installed at " + socket.id + ".";
                 else
                     Status = "Unable to install " + definition.DisplayName + ".";
             }
             else
-                Status = "Selected " + definition.DisplayName + ". Tap deck to place (R rotates).";
+                Status = "Selected " + definition.DisplayName + ". Click the deck to place (R rotates).";
         }
 
         /// <summary>Stable, save-friendly shipyard layout. Never serializes scene references.</summary>
@@ -239,13 +239,13 @@ namespace Boatships
                 return;
             }
             removeMode = true;
-            Status = "Remove mode: tap a placed deck component.";
+            Status = "Remove mode: click a placed deck component.";
         }
 
         public void Rotate()
         {
             rotationSteps = (rotationSteps + 1) % 4;
-            Status = "Rotation: " + RotationDegrees + "°. Tap deck to place.";
+            Status = "Rotation: " + RotationDegrees + "°. Click the deck to place.";
         }
 
         public bool TryInstallDeck(ShipEquipmentDefinition definition, int x, int z, int quarterTurns)

@@ -100,7 +100,9 @@ namespace Boatships.Editor
                 Check(!startMenu.gameObject.activeSelf, "Continue did not dismiss the startup menu.");
                 Transform guide = presentation.SafeRoot.Find("Campaign Overlay/Campaign Panel/Scroll View/Content/Skip Guide");
                 if (guide != null && guide.gameObject.activeInHierarchy) guide.GetComponent<Button>().onClick.Invoke();
-                presentation.SafeRoot.Find("Campaign Menu").GetComponent<Button>().onClick.Invoke();
+                BoatshipsCampaignHUD campaignHud = Object.FindAnyObjectByType<BoatshipsCampaignHUD>();
+                campaignHud.OpenCampaignPage(BoatshipsCampaignHUD.HullPage);
+                Check(campaignHud.BlockingOverlayOpen, "The campaign screen did not open.");
                 presentation.SafeRoot.Find("Campaign Overlay/Campaign Panel/Navigation/Settings").GetComponent<Button>().onClick.Invoke();
                 presentation.SafeRoot.Find("Campaign Overlay/Campaign Panel/Scroll View/Content/Main Menu").GetComponent<Button>().onClick.Invoke();
                 int previousSeed = saves.WorldSeed;
