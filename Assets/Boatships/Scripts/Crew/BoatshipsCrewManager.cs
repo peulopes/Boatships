@@ -502,22 +502,15 @@ namespace Boatships
             GameObject root = new GameObject("Crew - " + a.member.displayName);
             root.transform.SetParent(hull.transform, false);
             root.transform.localPosition = a.home;
-            AddPart(root.transform, PrimitiveType.Capsule, "Body", new Vector3(0f, 0.15f, 0f),
-                new Vector3(0.19f, 0.16f, 0.19f), GetMaterial(a.duty));
-            AddPart(root.transform, PrimitiveType.Sphere, "Head", new Vector3(0f, 0.34f, 0f),
-                new Vector3(0.16f, 0.16f, 0.16f), GetMaterial(CrewDuty.Idle));
+            // Same footprint as the old capsule crewman (about 0.42 hull units tall); the shirt shows the duty.
+            BoatshipsHumanoid.Build(root.transform, DutyColor(a.duty), 0.42f, false, a.key != null ? a.key.GetHashCode() & 0x7fffffff : index);
             return root.transform;
         }
 
         private void SetRoleColor(Agent a)
         {
             if (a.visual == null) return;
-            Transform body = a.visual.Find("Body");
-            if (body != null)
-            {
-                MeshRenderer renderer = body.GetComponent<MeshRenderer>();
-                if (renderer != null) renderer.sharedMaterial = GetMaterial(a.duty);
-            }
+            BoatshipsHumanoid.SetShirt(a.visual, DutyColor(a.duty));
         }
 
         private static void AddPart(Transform parent, PrimitiveType type, string name,
@@ -534,25 +527,15 @@ namespace Boatships
             if (renderer != null) renderer.sharedMaterial = material;
         }
 
-        private Material GetMaterial(CrewDuty duty)
+        private static Color DutyColor(CrewDuty duty)
         {
-            if (roleMaterials.TryGetValue(duty, out Material existing)) return existing;
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
-            if (shader == null) shader = Shader.Find("Standard");
-            Material created = new Material(shader);
-            created.name = "M12 Crew " + duty;
-            Color color;
             switch (duty)
             {
-                case CrewDuty.Gunner: color = new Color(0.84f, 0.28f, 0.18f); break;
-                case CrewDuty.Carpenter: color = new Color(0.90f, 0.72f, 0.28f); break;
-                case CrewDuty.Sailor: color = new Color(0.28f, 0.67f, 0.88f); break;
-                default: color = new Color(0.80f, 0.83f, 0.75f); break;
+                case CrewDuty.Gunner: return new Color(0.84f, 0.28f, 0.18f);
+                case CrewDuty.Carpenter: return new Color(0.90f, 0.72f, 0.28f);
+                case CrewDuty.Sailor: return new Color(0.28f, 0.67f, 0.88f);
+                default: return new Color(0.80f, 0.83f, 0.75f);
             }
-            if (created.HasProperty("_BaseColor")) created.SetColor("_BaseColor", color);
-            else created.color = color;
-            roleMaterials.Add(duty, created);
-            return created;
         }
 
         private static void DestroyAvatar(Agent a)

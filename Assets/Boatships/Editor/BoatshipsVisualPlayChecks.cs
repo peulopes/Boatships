@@ -118,30 +118,25 @@ namespace Boatships.Editor
                 Check(fort != null && fort.transform.Find("Fort Cannon 1/Muzzle") != null &&
                     fort.transform.Find("Fort Cannon 2/Muzzle") != null, "Port has no armed coastal fort.");
                 bearings.Add(Mathf.RoundToInt(harbour.localEulerAngles.y));
-                int houses = 0;
-                int pierPlanks = 0;
-                foreach (Transform child in harbour)
+                // The port's settlement is the walkable harbour town (it replaced the old block houses and pier).
+                BoatshipsTown town = island.GetComponent<BoatshipsTown>();
+                Check(town != null && town.Built && town.Doors.Count == 5, "Port has no walkable harbour town.");
+                Transform townRoot = island.transform.Find("Port Town " + site.Cell);
+                Check(townRoot != null, "Harbour town is not part of the island.");
+                foreach (string shop in new[] { "Tavern", "General Store", "Shipwright", "Harbor Master" })
                 {
-                    if (child.name.StartsWith("Port House") || child.name == "Harbour Tavern")
-                    {
-                        houses++;
-                        Vector3 local = island.transform.InverseTransformPoint(child.position);
-                        Check(new Vector2(local.x, local.z).magnitude > site.Radius * 0.4f,
-                            "Town building placed in the island centre: island " + i + ", distance " +
-                            new Vector2(local.x, local.z).magnitude + ", radius " + site.Radius);
-                        Check(child.Find("Plaster walls") != null && child.Find("Pitched tile roof") != null,
-                            "House is missing its visible geometry.");
-                    }
-                    if (child.name == "Pier head plank")
-                    {
-                        pierPlanks++;
-                        Vector3 local = island.transform.InverseTransformPoint(child.position);
-                        Check(new Vector2(local.x, local.z).magnitude > site.Radius * 0.78f + 3.2f,
-                            "Pier head is inside the ship navigation exclusion area.");
-                        Check(child.position.y > 1f, "Pier is submerged.");
-                    }
+                    Transform building = townRoot.Find(shop);
+                    Check(building != null && building.Find("Walls") != null && building.Find("Roof") != null,
+                        "Harbour town is missing its " + shop + ".");
+                    Vector3 local = island.transform.InverseTransformPoint(building.position);
+                    Check(new Vector2(local.x, local.z).magnitude > site.Radius * 0.15f,
+                        "Town building placed in the island centre: island " + i + ", distance " +
+                        new Vector2(local.x, local.z).magnitude + ", radius " + site.Radius);
                 }
-                Check(houses == 6 && pierPlanks > 0, "Port must contain a town and a pier.");
+                Transform pier = townRoot.Find("Pier");
+                Check(pier != null && pier.position.y > 0.3f, "Harbour town has no pier above the water.");
+                Check(Vector2.Distance(town.Mooring, site.Center) > site.Radius * 0.78f + 3.2f,
+                    "Town mooring is inside the ship navigation exclusion area.");
                 Object.Destroy(island);
             }
             Check(bearings.Count >= 7, "Port sides are not varying with the island seed.");

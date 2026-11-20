@@ -77,50 +77,6 @@ namespace Boatships
         public float FrameYaw => Frame.eulerAngles.y;
     }
 
-    /// <summary>Primitive low-poly people, sized in world units to match the toy-scale ships.</summary>
-    public static class BoatshipsHumanoid
-    {
-        private static readonly Dictionary<Color32, Material> materials = new Dictionary<Color32, Material>();
-        public static readonly Color Skin = new Color(0.9f, 0.74f, 0.58f);
-
-        public static Material MaterialFor(Color color)
-        {
-            Color32 key = color;
-            if (materials.TryGetValue(key, out Material cached) && cached != null) return cached;
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
-            Material created = new Material(shader != null ? shader : Shader.Find("Standard")) { color = color, name = "Boatships Figure" };
-            materials[key] = created;
-            return created;
-        }
-
-        public static GameObject Part(PrimitiveType type, string name, Transform parent, Vector3 position, Vector3 scale, Color color)
-        {
-            GameObject part = GameObject.CreatePrimitive(type);
-            part.name = name;
-            UnityEngine.Object.Destroy(part.GetComponent<Collider>());
-            part.transform.SetParent(parent, false);
-            part.transform.localPosition = position;
-            part.transform.localScale = scale;
-            part.GetComponent<Renderer>().sharedMaterial = MaterialFor(color);
-            return part;
-        }
-
-        /// <summary>Builds a figure standing at the parent's origin. Returns the sword arm pivot (or null).</summary>
-        public static Transform Build(Transform parent, Color shirt, float height, bool sword)
-        {
-            Part(PrimitiveType.Capsule, "Body", parent, new Vector3(0f, height * 0.36f, 0f),
-                new Vector3(height * 0.3f, height * 0.36f, height * 0.24f), shirt);
-            Part(PrimitiveType.Sphere, "Head", parent, new Vector3(0f, height * 0.84f, 0f), Vector3.one * height * 0.24f, Skin);
-            if (!sword) return null;
-            GameObject arm = new GameObject("Sword Arm");
-            arm.transform.SetParent(parent, false);
-            arm.transform.localPosition = new Vector3(height * 0.2f, height * 0.5f, height * 0.05f);
-            Part(PrimitiveType.Cube, "Cutlass", arm.transform, new Vector3(0f, 0f, height * 0.26f),
-                new Vector3(height * 0.035f, height * 0.06f, height * 0.5f), new Color(0.75f, 0.76f, 0.8f));
-            return arm.transform;
-        }
-    }
-
     /// <summary>Simple melee NPC on a ship deck. Team 0 fights alongside the player, team 1 against.</summary>
     public sealed class BoatshipsDeckFighter : MonoBehaviour
     {
@@ -162,8 +118,12 @@ namespace Boatships
             fighter.local = deck.Constrain(local, local);
             fighter.yaw = team == 0 ? 0f : 180f;
             fighter.nextAttack = Time.time + UnityEngine.Random.Range(0.5f, 1.5f);
+            // Allies wear blue with tricorns; boarders wear red with bandanas, so sides read at a glance.
             Color shirt = team == 0 ? new Color(0.2f, 0.35f, 0.75f) : new Color(0.75f, 0.15f, 0.12f);
-            fighter.sword = BoatshipsHumanoid.Build(root.transform, shirt, BoatshipsFirstPerson.HumanHeight, true);
+            HumanoidHat hat = team == 0 ? HumanoidHat.Tricorn : HumanoidHat.Bandana;
+            Color hatColor = team == 0 ? new Color(0.12f, 0.12f, 0.16f) : new Color(0.45f, 0.08f, 0.08f);
+            fighter.sword = BoatshipsHumanoid.Build(root.transform, shirt, BoatshipsFirstPerson.HumanHeight, true,
+                UnityEngine.Random.Range(0, int.MaxValue), hat, hatColor);
             root.transform.localPosition = fighter.local;
             All.Add(fighter);
             return fighter;
@@ -227,7 +187,17 @@ namespace Boatships
             transform.localPosition = local;
             transform.localRotation = Quaternion.Euler(0f, yaw, 0f);
             swing = Mathf.Max(0f, swing - dt * 3.5f);
-            if (sword != null) sword.localRotation = Quaternion.Euler(-20f + Mathf.Sin(swing * Mathf.PI) * 95f, 0f, 0f);
+            if (sword != null) sword.localRotation = Quaternion.Euler(SwordArmPitch(1f - swing), 0f, 6f);
+        }
+
+        /// <summary>Guard with the cutlass held forward, wind up overhead, then chop down (t: 0 → 1 over a swing).</summary>
+        private static float SwordArmPitch(float t)
+        {
+            const float guard = -55f, raised = -165f, chop = -10f;
+            if (t >= 1f) return guard;
+            if (t < 0.35f) return Mathf.Lerp(guard, raised, Mathf.SmoothStep(0f, 1f, t / 0.35f));
+            if (t < 0.7f) return Mathf.Lerp(raised, chop, Mathf.SmoothStep(0f, 1f, (t - 0.35f) / 0.35f));
+            return Mathf.Lerp(chop, guard, Mathf.SmoothStep(0f, 1f, (t - 0.7f) / 0.3f));
         }
 
         private bool FindTarget(out Vector3 targetLocal, out BoatshipsDeckFighter enemy, out bool targetIsPlayer)

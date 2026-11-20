@@ -26,6 +26,10 @@ namespace Boatships
         private const float EyeHeight = 0.7f;
         private const float WalkSpeed = 1.7f;
         private const float Gravity = 6f;
+        // Jump apex of about 0.3 m on an 0.8 m figure (Space), with a short grace window after leaving a ledge.
+        private const float JumpSpeed = 1.95f;
+        private const float CoyoteTime = 0.12f;
+        private const float JumpBuffer = 0.12f;
         private const float MouseLook = 0.12f;
         private enum Mode { None, Ground, Deck }
 
@@ -46,6 +50,9 @@ namespace Boatships
         private float yaw;
         private float pitch;
         private float verticalSpeed;
+        private float hop;           // height above the deck while jumping on a ship
+        private float lastGrounded;  // Time.time the player last stood on something
+        private float jumpQueuedAt = float.NegativeInfinity;
         private float swing;
         private float nextAttack;
         private BoatshipsDeckCannon mounted;
@@ -67,6 +74,9 @@ namespace Boatships
         private float flashAlpha;
 
         public bool Active => mode != Mode.None;
+        /// <summary>True while any first-person session runs, so ship controls leave the keyboard alone.</summary>
+        public static bool OnFoot { get; private set; }
+        public bool Airborne => mode == Mode.Deck ? hop > 0f : mode == Mode.Ground && controller != null && !controller.isGrounded;
         public float Health { get; private set; } = 100f;
         public bool Alive => Health > 0f;
         public bool Blocking { get; private set; }
@@ -124,7 +134,7 @@ namespace Boatships
             End();
             mode = Mode.Ground;
             deck = null;
-            yaw = facing; pitch = 5f; verticalSpeed = 0f;
+            yaw = facing; pitch = 5f; verticalSpeed = 0f; hop = 0f;
             rig.SetActive(true);
             controller.enabled = false;
             rig.transform.position = position;
@@ -139,7 +149,7 @@ namespace Boatships
             if (deck == null) return;
             mode = Mode.Deck;
             deckLocal = deck.Constrain(local, local);
-            yaw = facing; pitch = 0f;
+            yaw = facing; pitch = 0f; verticalSpeed = 0f; hop = 0f;
             Activate();
         }
 
@@ -147,6 +157,8 @@ namespace Boatships
         {
             if (mode == Mode.None) return;
             mode = Mode.None;
+            OnFoot = false;
+            hop = 0f;
             mounted = null; focused = null; deck = null;
             interactables.Clear();
             exitAction = null;
@@ -210,7 +222,10 @@ namespace Boatships
             UpdateCursor(input);
             if (mode == Mode.Deck && (deck == null || !deck.Valid)) { End(); return; }
 
+            OnFoot = true;
             Vector2 move = input ? ReadMove() : Vector2.zero;
+            Keyboard jumpKeys = Keyboard.current;
+            if (input && mounted == null && jumpKeys != null && jumpKeys.spaceKey.wasPressedThisFrame) jumpQueuedAt = Time.time;
             Vector2 look = input ? ReadLook() : Vector2.zero;
             Blocking = input && mounted == null && ReadBlock();
             if (mounted != null)
@@ -247,7 +262,7 @@ namespace Boatships
             }
             else if (mode == Mode.Deck && deck != null && deck.Valid)
             {
-                Vector3 eye = deck.ToWorld(deckLocal) + Vector3.up * EyeHeight;
+                Vector3 eye = deck.ToWorld(deckLocal) + Vector3.up * (EyeHeight + hop);
                 cam.transform.SetPositionAndRotation(eye, Quaternion.Euler(pitch, deck.FrameYaw + yaw, 0f));
             }
             else if (mode == Mode.Ground)
@@ -264,17 +279,37 @@ namespace Boatships
         {
             if (dt <= 0f) return;
             Vector3 planar = new Vector3(input.x, 0f, input.y);
+            bool wantsJump = Time.time - jumpQueuedAt <= JumpBuffer;
             if (mode == Mode.Deck)
             {
                 Vector3 direction = Quaternion.Euler(0f, yaw, 0f) * planar;
                 deckLocal = deck.Constrain(deckLocal, deckLocal + direction * (WalkSpeed / deck.Scale) * dt);
+                // The deck is a hull-local plane, so a jump is a height offset riding along with the ship.
+                if (hop <= 0f && wantsJump) { verticalSpeed = JumpSpeed; hop = 0.0001f; jumpQueuedAt = float.NegativeInfinity; }
+                if (hop > 0f)
+                {
+                    verticalSpeed -= Gravity * dt;
+                    hop += verticalSpeed * dt;
+                    if (hop <= 0f) { hop = 0f; verticalSpeed = 0f; }
+                }
                 return;
             }
             Vector3 velocity = Quaternion.Euler(0f, yaw, 0f) * planar * WalkSpeed;
-            if (controller.isGrounded && verticalSpeed < 0f) verticalSpeed = -0.5f;
+            if (controller.isGrounded)
+            {
+                lastGrounded = Time.time;
+                if (verticalSpeed < 0f) verticalSpeed = -0.5f;
+            }
+            if (wantsJump && verticalSpeed <= 0f && Time.time - lastGrounded <= CoyoteTime)
+            {
+                verticalSpeed = JumpSpeed;
+                lastGrounded = float.NegativeInfinity;
+                jumpQueuedAt = float.NegativeInfinity;
+            }
             verticalSpeed -= Gravity * dt;
             Vector3 before = rig.transform.position;
-            controller.Move((velocity + Vector3.up * verticalSpeed) * dt);
+            CollisionFlags hit = controller.Move((velocity + Vector3.up * verticalSpeed) * dt);
+            if ((hit & CollisionFlags.Above) != 0 && verticalSpeed > 0f) verticalSpeed = 0f;
             if (Walkable(rig.transform.position)) return;
             // Never walk off into the sea (piers and decks are fine).
             controller.enabled = false;
@@ -445,7 +480,7 @@ namespace Boatships
             if (mounted != null)
                 promptText.text = (mounted.Ready ? "Aim and fire" : "Reloading…") + "  —  [Left click] fire   [E] leave the cannon" + keys;
             else if (focused != null) promptText.text = focused.Prompt + "  [E]" + keys;
-            else promptText.text = combat ? "[Left click] attack   [Right mouse] block" + keys : keys.TrimStart('\n');
+            else promptText.text = combat ? "[Left click] attack   [Right mouse] block   [Space] jump" + keys : keys.TrimStart('\n');
             healthText.text = combat ? "Health " + Mathf.CeilToInt(Health) + (Kills > 0 ? "\nFoes downed " + Kills : "") : "";
             statusText.text = status;
             flashAlpha = Mathf.MoveTowards(flashAlpha, 0f, Time.deltaTime * 1.5f);

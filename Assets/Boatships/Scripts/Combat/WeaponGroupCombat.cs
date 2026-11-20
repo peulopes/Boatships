@@ -163,7 +163,8 @@ namespace Boatships
             if (trajectoryLine != null) trajectoryLine.enabled = enabledForCombat;
             if (!enabledForCombat) return;
 
-            Keyboard kb = Keyboard.current;
+            // On foot (boarding fights, towns) Space jumps and Tab leaves, so the ship's guns ignore the keyboard.
+            Keyboard kb = BoatshipsFirstPerson.OnFoot || BoatshipsUI.Typing ? null : Keyboard.current;
             if (kb != null)
             {
                 if (kb.digit1Key.wasPressedThisFrame) SelectGroup(1);

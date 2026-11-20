@@ -680,7 +680,7 @@ namespace Boatships
                 string kind = !known ? "Nobody has charted this island yet." :
                     site.Kind == IslandKind.PortSite ? BoatshipsFactions.Name(BoatshipsFactions.OfPort(site.Cell)) + " port" :
                     site.Kind == IslandKind.PirateBaseSite ? "Pirate haven" :
-                    site.Kind == IslandKind.TreasureSite ? "Rumoured treasure" : "Deserted " + site.Biome.ToString().ToLowerInvariant() + " island";
+                    site.Kind == IslandKind.TreasureSite ? "Rumoured treasure" : "Deserted " + site.Biome.ToString().ToLowerInvariant() + " " + ProceduralIslandChunk.ShapeName(site);
                 float distance = Vector2.Distance(travel.Position, site.Center);
                 selectionBody.text = kind + "\nDistance " + distance.ToString("0") + "   •   about " +
                     travel.PlayerTravelDays(site.Center).ToString("0.0") + " days' sailing";

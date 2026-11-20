@@ -198,6 +198,7 @@ namespace Boatships
 
         private BoatshipsFirstPerson fps;
         private BoatshipsTown town;
+        private BoatshipsTown activeTown;
         private BoatshipsCrewBattle crewBattle;
         private ArchipelagoWorld.IslandSite townSite;
         private readonly List<Renderer> hiddenRenderers = new List<Renderer>();
@@ -229,7 +230,13 @@ namespace Boatships
         private void ExitFirstPerson()
         {
             if (crewBattle != null && crewBattle.Active) return;
-            if (town != null) town.Clear();
+            if (activeTown != null)
+            {
+                activeTown.Handler = null;
+                // Only the stand-in town is torn down; a port's own harbour town stays with its island.
+                if (activeTown == town) town.Clear();
+                activeTown = null;
+            }
             if (fps != null) fps.End();
         }
 
@@ -854,7 +861,8 @@ namespace Boatships
             {
                 case IslandKind.PirateBaseSite: description = "A pirate haven. Smoke rises from hidden coves and black sails ride at anchor."; break;
                 case IslandKind.TreasureSite: description = "Old charts mark this island. Rumour says treasure washed up along its shore."; break;
-                default: description = "A quiet, uninhabited " + site.Biome.ToString().ToLowerInvariant() + " island."; break;
+                default: description = "A quiet, uninhabited " + site.Biome.ToString().ToLowerInvariant() + " " +
+                    ProceduralIslandChunk.ShapeName(site) + ". " + ProceduralIslandChunk.ShapeDescription(site); break;
             }
             var options = new List<MapMenuOption>();
             if (character.OwnsShip && !OnJob)
@@ -1254,15 +1262,33 @@ namespace Boatships
         {
             if (fps == null || town == null || OnJob) return;
             if (docking.IsDocked) docking.Undock();
-            PlaceShip(Coast(site, state.position, 6f), site.Center);
+            // Moor beside the town's pier.
+            BoatshipsTown harbour = BoatshipsTown.For(site.Cell);
+            Vector2 mooring = harbour != null ? harbour.Mooring : BoatshipsTown.MooringPoint(site);
+            PlaceShip(KeepOnWater(mooring), site.Center);
             EnterLocal(TravelMode.Town, site, true);
             if (movement != null) movement.enabled = false;
             if (weapons != null) weapons.enabled = false;
             UpdateFlagshipVisibility();
             townSite = site;
             state.lastPort = site.Cell;
-            List<FpsInteractable> doors = town.Build(site, world.Seed, ship.position, service => TownService(service),
-                out Vector3 spawn, out float facing);
+            if (harbour == null) harbour = BoatshipsTown.For(site.Cell); // the island may have streamed in after the move
+            Vector3 spawn;
+            float facing;
+            IReadOnlyList<FpsInteractable> doors;
+            if (harbour != null)
+            {
+                doors = harbour.Doors; spawn = harbour.Spawn; facing = harbour.Facing;
+            }
+            else
+            {
+                // Island not loaded: build a stand-in town at the same harbour spot.
+                harbour = town;
+                doors = town.Build(site, world.Seed, new Vector3(mooring.x, 0f, mooring.y), service => town.Handler?.Invoke(service),
+                    out spawn, out facing);
+            }
+            activeTown = harbour;
+            harbour.Handler = service => TownService(service);
             fps.BeginGround(spawn, facing);
             foreach (FpsInteractable door in doors) fps.AddInteractable(door);
             fps.SetExit("Leave town", () => ReturnToMap(false));
@@ -1382,7 +1408,7 @@ namespace Boatships
         {
             if (!Captain) return;
             ExitFirstPerson();
-            if (!docking.IsDocked) PlaceShip(Coast(port, state.position, 6f), port.Center);
+            if (!docking.IsDocked) PlaceShip(KeepOnWater(BoatshipsTown.MooringPoint(port)), port.Center); // moor at the town pier
             EnterLocal(TravelMode.Port, port, true);
             if (!docking.IsDocked) docking.Dock();
             if (!docking.IsDocked) { Notify(docking.Status); ReturnToMap(false); }

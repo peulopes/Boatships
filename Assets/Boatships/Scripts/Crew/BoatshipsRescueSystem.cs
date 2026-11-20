@@ -119,10 +119,13 @@ namespace Boatships
                 swimmer.transform.position = survivor.Value;
                 AddPart(swimmer.transform, PrimitiveType.Cube, new Vector3(0f, -0.12f, 0f),
                     new Vector3(1.6f, 0.3f, 1.1f), timber);
-                AddPart(swimmer.transform, PrimitiveType.Capsule, new Vector3(0f, 0.35f, 0f),
-                    new Vector3(0.5f, 0.4f, 0.5f), survivorMaterial);
-                AddPart(swimmer.transform, PrimitiveType.Sphere, new Vector3(0f, 0.95f, 0f),
-                    Vector3.one * 0.45f, survivorMaterial);
+                // A castaway in a bright orange shirt standing on the plank, waving for rescue.
+                Transform castaway = new GameObject("Castaway").transform;
+                castaway.SetParent(swimmer.transform, false);
+                castaway.localPosition = new Vector3(0f, 0.03f, 0f);
+                castaway.localRotation = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
+                BoatshipsHumanoid.Build(castaway, new Color(1f, 0.5f, 0.12f), 1.25f, false, survivor.Key.GetHashCode() & 0x7fffffff);
+                castaway.GetComponent<BoatshipsHumanoidRig>().Waving = true;
                 swimmers.Add(survivor.Key, swimmer);
             }
             currentWreckIds.Clear();
