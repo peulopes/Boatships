@@ -441,6 +441,64 @@ namespace Boatships
 
         public bool SaveNow() => Save();
 
+        /// <summary>Character creation: replaces the fresh world's default supplies with the background kit.</summary>
+        public bool ApplyStartingKit(int gold, int wood, int iron, int rations, int cannons, int crewCount, System.Random random)
+        {
+            if (!CanCheckpoint) return false;
+            string before = JsonUtility.ToJson(state);
+            state.gold = Mathf.Max(0, gold); state.wood = Mathf.Max(0, wood); state.iron = Mathf.Max(0, iron);
+            state.rations = Mathf.Max(0, rations); state.spareCannons = Mathf.Max(0, cannons);
+            for (int i = 0; i < crewCount && state.crew.Count < 24; i++)
+            {
+                int skill = random.Next(30, 56);
+                string key = activeSeed + ":start:" + i;
+                state.crew.Add(new CrewMember
+                {
+                    offerKey = key,
+                    displayName = FirstNames[random.Next(FirstNames.Length)] + " " + LastNames[random.Next(LastNames.Length)],
+                    role = Roles[random.Next(Roles.Length)],
+                    skill = skill,
+                    wage = 3 + skill / 15
+                });
+                state.recruitedOfferKeys.Add(key);
+            }
+            LastMessage = "Your story begins.";
+            if (Save()) return true;
+            state = JsonUtility.FromJson<SaveState>(before);
+            return false;
+        }
+
+        /// <summary>Adds (positive) or removes (negative) gold. Fails rather than going below zero.</summary>
+        public bool TryAdjustGold(int delta)
+        {
+            if (!CanCheckpoint || state.gold + delta < 0) return false;
+            state.gold += delta;
+            if (Save()) return true;
+            state.gold -= delta;
+            return false;
+        }
+
+        /// <summary>Daily ship upkeep. Returns false (and empties the stores) when there is not enough food.</summary>
+        public bool ConsumeRations(int amount)
+        {
+            if (!CanCheckpoint || amount <= 0) return true;
+            bool enough = state.rations >= amount;
+            state.rations = Mathf.Max(0, state.rations - amount);
+            Save();
+            return enough;
+        }
+
+        /// <summary>Drops unresolved encounters (enemies the player escaped from on the world map).</summary>
+        public bool RemoveUnresolvedEncounters(ICollection<string> ids)
+        {
+            if (saveLocked || !hasActiveSeed || ids == null || ids.Count == 0) return false;
+            string before = JsonUtility.ToJson(state);
+            state.campaign.encounters.RemoveAll(item => ids.Contains(item.id) && !item.defeated && !item.captured);
+            if (Save()) return true;
+            state = JsonUtility.FromJson<SaveState>(before);
+            return false;
+        }
+
         public bool TryCampaignChange(Action<CampaignProgress> change)
         {
             if (!hasActiveSeed || saveLocked) return false;

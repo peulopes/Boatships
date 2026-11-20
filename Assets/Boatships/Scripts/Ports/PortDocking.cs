@@ -27,6 +27,8 @@ namespace Boatships
         private bool viewingShipyard;
         private int knownSeed = int.MinValue;
 
+        /// <summary>E (dock/undock) and O (test jump). Disabled while walking in first person.</summary>
+        public bool KeyboardShortcuts { get; set; } = true;
         public bool IsDocked => docked;
         public bool ViewingShipyard => viewingShipyard;
         public bool HasPort => hasPort;
@@ -66,7 +68,7 @@ namespace Boatships
         {
             SyncSeed();
             RefreshPort();
-            Keyboard keyboard = Keyboard.current;
+            Keyboard keyboard = KeyboardShortcuts ? Keyboard.current : null;
             if (keyboard != null)
             {
                 if (keyboard.eKey.wasPressedThisFrame)

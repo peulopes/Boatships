@@ -23,6 +23,12 @@ namespace Boatships
         private Material cargoMaterial;
         public string Status { get; private set; } = "Preparing encounters";
         public ArchipelagoWorld World => world;
+        /// <summary>Legacy free-sailing mode spawns a new wave every minute. The world map disables this
+        /// and requests battles explicitly through SpawnBattle.</summary>
+        public bool AutoWaves { get; set; } = true;
+        /// <summary>While the world map is open the 3D encounter simulation is paused.</summary>
+        public bool Suspended { get; set; }
+        public bool IsReady => ready && world != null && economy.ActiveSeed == world.Seed && seed == world.Seed;
 
         public void Configure(ArchipelagoWorld map, PortEconomy account, ShipCombatTarget controlled,
             EnemyShipAI source, OceanWaves waves)
@@ -49,6 +55,7 @@ namespace Boatships
                 nextWave = 0f;
                 RestoreActors();
             }
+            if (Suspended) return;
             bool unresolved = false;
             int follower = 0;
             foreach (EncounterRecord record in economy.Campaign.encounters)
@@ -87,7 +94,7 @@ namespace Boatships
                 else unresolved = true;
             }
             if (unresolved) nextWave = Time.time + 60f;
-            else if (Time.time >= nextWave && !docking.IsDocked) SpawnWave();
+            else if (AutoWaves && Time.time >= nextWave && !docking.IsDocked) SpawnWave();
             SynchronizeCargo();
         }
 
@@ -158,6 +165,105 @@ namespace Boatships
             if (limiter == null) limiter = clone.AddComponent<ArchipelagoNavigationLimiter>();
             limiter.Configure(world);
             actors.Add(record.id, target);
+        }
+
+        /// <summary>Spawns a specific battle around the flagship. Returns the new encounter ids.</summary>
+        public List<string> SpawnBattle(IList<EncounterKind> kinds, int tier, float distance)
+        {
+            var ids = new List<string>();
+            if (!IsReady || kinds == null || kinds.Count == 0) return ids;
+            tier = Mathf.Clamp(tier, 1, 5);
+            int serial = economy.Campaign.encounterSerial;
+            var random = new System.Random(unchecked(world.Seed * 397 ^ serial));
+            float baseAngle = (float)random.NextDouble() * Mathf.PI * 2f;
+            var records = new List<EncounterRecord>();
+            for (int i = 0; i < kinds.Count; i++)
+            {
+                float angle = baseAngle + (i - (kinds.Count - 1) * 0.5f) * 0.45f;
+                Vector3 position = world.KeepOnWater(player.transform.position +
+                    new Vector3(Mathf.Sin(angle), 0f, Mathf.Cos(angle)) * (distance + i * 6f), 5f);
+                Vector3 toPlayer = player.transform.position - position;
+                records.Add(new EncounterRecord { id = "campaign_" + serial + "_" + i,
+                    kind = kinds[i], tier = tier, position = position,
+                    yaw = Mathf.Atan2(toPlayer.x, toPlayer.z) * Mathf.Rad2Deg,
+                    defenderHealth = 45f + tier * 20f });
+            }
+            if (!economy.TryCampaignChange(progress =>
+                { progress.encounterSerial++; progress.encounters.AddRange(records); })) return ids;
+            foreach (EncounterRecord record in records) { Spawn(record); ids.Add(record.id); }
+            Status = kinds.Count + " enemy vessel(s) engaged. Tier " + tier + ".";
+            return ids;
+        }
+
+        /// <summary>The live 3D ship for an encounter, if spawned.</summary>
+        public ShipCombatTarget ActorFor(string id) =>
+            id != null && actors.TryGetValue(id, out ShipCombatTarget actor) ? actor : null;
+
+        /// <summary>Spawns an unrecorded AI ship (e.g. the merchant the player works aboard).
+        /// The caller owns and destroys it; it is not saved.</summary>
+        public ShipCombatTarget SpawnAlly(string name, Vector3 position, float yaw, int tier)
+        {
+            if (!IsReady) return null;
+            position = world.KeepOnWater(position, 5f);
+            GameObject clone = Instantiate(template.gameObject, position, Quaternion.Euler(0f, yaw, 0f));
+            clone.name = name;
+            clone.SetActive(true);
+            ShipCombatTarget target = clone.GetComponent<ShipCombatTarget>();
+            target.Hull.EnableStructuralIntegrity();
+            target.Hull.HullHealthMultiplier = 1f + tier * 0.12f;
+            target.Hull.ResetHull();
+            clone.GetComponent<EnemyShipAI>().ConfigureEncounter(EncounterKind.Patrol, tier, position);
+            ArchipelagoNavigationLimiter limiter = clone.GetComponent<ArchipelagoNavigationLimiter>();
+            if (limiter == null) limiter = clone.AddComponent<ArchipelagoNavigationLimiter>();
+            limiter.Configure(world);
+            return target;
+        }
+
+        /// <summary>Number of the given encounters that are still afloat and hostile.</summary>
+        public int RemainingHostiles(ICollection<string> ids)
+        {
+            int remaining = 0;
+            foreach (EncounterRecord record in economy.Campaign.encounters)
+                if (ids.Contains(record.id) && !record.defeated && !record.captured) remaining++;
+            return remaining;
+        }
+
+        /// <summary>Removes every unresolved hostile (used when the player leaves for the world map).</summary>
+        public void DismissUnresolved()
+        {
+            if (!IsReady) return;
+            var ids = new List<string>();
+            foreach (EncounterRecord record in economy.Campaign.encounters)
+            {
+                if (record.defeated || record.captured) continue;
+                ids.Add(record.id);
+                if (actors.TryGetValue(record.id, out ShipCombatTarget actor))
+                {
+                    if (actor != null) Destroy(actor.gameObject);
+                    actors.Remove(record.id);
+                }
+            }
+            if (ids.Count > 0) economy.RemoveUnresolvedEncounters(ids);
+        }
+
+        /// <summary>Moves captured fleet ships back into formation after a world-map jump.</summary>
+        public void RegroupFleet()
+        {
+            if (!IsReady) return;
+            int follower = 0;
+            foreach (EncounterRecord record in economy.Campaign.encounters)
+            {
+                if (!record.captured || !actors.TryGetValue(record.id, out ShipCombatTarget actor) || actor == null) continue;
+                follower++;
+                Vector3 target = player.transform.TransformPoint(new Vector3(follower % 2 == 0 ? -7f : 7f,
+                    0f, -7f * ((follower + 1) / 2)));
+                target = world.KeepOnWater(target, 3.5f);
+                target.y = ocean.SampleHeight(target.x, target.z, Time.time) + 0.55f;
+                actor.transform.position = target;
+                Rigidbody body = actor.GetComponent<Rigidbody>();
+                if (body != null) body.position = target;
+                actor.transform.rotation = player.transform.rotation;
+            }
         }
 
         public ShipCombatTarget NearestEnemy(out EncounterRecord record, out float distance)

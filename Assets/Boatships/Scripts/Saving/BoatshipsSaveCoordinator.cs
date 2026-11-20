@@ -23,6 +23,9 @@ namespace Boatships
 #if UNITY_EDITOR
         [SerializeField, HideInInspector] private string validationDirectory;
 #endif
+        /// <summary>Raised at the start of every checkpoint so additional systems (character, world map)
+        /// can stage their documents into the same atomic commit.</summary>
+        public static event Action CheckpointCapturing;
         public string Status { get; private set; } = "Initializing save slot";
         public int Slot => BoatshipsSaveStore.Slot;
         public bool IsReady => ready && !pendingNewGameSeed.HasValue && economy != null && economy.CanCheckpoint &&
@@ -80,6 +83,8 @@ namespace Boatships
                 return false;
             }
             encounters.CaptureEncounterState();
+            try { CheckpointCapturing?.Invoke(); }
+            catch (Exception ex) { Debug.LogWarning("Boatships checkpoint extension failed: " + ex.Message, this); }
             ship.SaveShip();
             crew.SaveAssignments();
             progression.SaveStates();

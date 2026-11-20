@@ -62,6 +62,9 @@ namespace Boatships
         public float SideLength => cellsPerAxis * cellSize;
         public float HalfExtent => SideLength * 0.5f;
         public Transform Player => player;
+        public float CellSize => cellSize;
+        public int CellsPerAxis => cellsPerAxis;
+        public IEnumerable<IslandSite> Islands => sites.Values;
 
         public bool TryGetIsland(Vector2Int cell, out IslandSite site) =>
             sites.TryGetValue(cell, out site);

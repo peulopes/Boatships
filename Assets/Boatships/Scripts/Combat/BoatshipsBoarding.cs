@@ -22,6 +22,18 @@ namespace Boatships
         private GameObject plank;
         private Material plankMaterial;
         public bool InProgress => target != null;
+        public ShipCombatTarget Target => target;
+        public EncounterRecord Encounter => encounter;
+        /// <summary>Raised when a boarding action starts (first-person boarding hooks in here).</summary>
+        public event System.Action<ShipCombatTarget, EncounterRecord> Started;
+        /// <summary>Raised when a boarding action ends for any reason (capture or retreat).</summary>
+        public event System.Action Ended;
+
+        /// <summary>Extra damage to the defenders, e.g. from the player fighting in first person.</summary>
+        public void DamageDefenders(float amount)
+        {
+            if (InProgress && amount > 0f) encounter.defenderHealth = Mathf.Max(0f, encounter.defenderHealth - amount);
+        }
         public string Status { get; private set; } = "Assign Fighters, weaken an enemy hull below 65%, then approach within 8m.";
 
         public void Configure(BoatshipsEncounterDirector director, BoatshipsCrewProgression sailors,
@@ -58,6 +70,7 @@ namespace Boatships
             beganAt = Time.time;
             nextRound = Time.time + 4f;
             Status = "Fighters crossing to the enemy deck.";
+            Started?.Invoke(target, encounter);
         }
 
         private void Update()
@@ -123,6 +136,7 @@ namespace Boatships
             target = null; encounter = null; enemyAI = null;
             if (plank != null) Destroy(plank);
             if (plankMaterial != null) Destroy(plankMaterial);
+            Ended?.Invoke();
         }
 
         private void OnDisable() { if (InProgress) Finish(true); }

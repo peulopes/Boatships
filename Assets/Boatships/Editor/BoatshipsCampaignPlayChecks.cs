@@ -108,6 +108,9 @@ namespace Boatships.Editor
                 string previousAccount = Path.Combine(Application.persistentDataPath, "boatships_port_seed_" + previousSeed + ".json");
                 string previousSnapshot = BoatshipsSaveStore.Read(previousAccount);
                 startMenu.Find("Start Panel/New Game").GetComponent<Button>().onClick.Invoke();
+                BoatshipsCharacterCreation creation = Object.FindAnyObjectByType<BoatshipsCharacterCreation>();
+                Check(creation != null && creation.IsOpen, "New Game did not open character creation.");
+                creation.BeginForTesting(CharacterBackground.MerchantsChild);
                 await Task.Delay(1200);
                 saves = Object.FindAnyObjectByType<BoatshipsSaveCoordinator>();
                 economy = Object.FindAnyObjectByType<PortEconomy>();
@@ -149,7 +152,11 @@ namespace Boatships.Editor
                 for (int i = 0; i < 5 && crew.GetCrewDuty(crew.SelectedCrewKey) != CrewDuty.Fighter; i++) crew.CycleSelectedDuty();
                 Check(crew.GetCrewDuty(crew.SelectedCrewKey) == CrewDuty.Fighter, "Fighter duty could not be assigned.");
                 docking.Undock();
+                BoatshipsTravelController travel = Object.FindAnyObjectByType<BoatshipsTravelController>();
+                Check(travel != null && travel.Character.HasCharacter, "The created character was not applied.");
+                travel.BeginTestBattle();
                 await Task.Delay(1000);
+                Check(travel.Mode == TravelMode.Battle, "The world-map battle did not start.");
                 ShipCombatTarget target = director.NearestEnemy(out EncounterRecord encounter, out _);
                 Check(target != null && encounter != null, "Repeatable encounters did not spawn.");
                 ShipFlooding flooding = target.GetComponent<ShipFlooding>();

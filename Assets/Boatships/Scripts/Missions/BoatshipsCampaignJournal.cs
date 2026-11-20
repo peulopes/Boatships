@@ -27,19 +27,20 @@ namespace Boatships
             ShipCombatTarget flagship, WeaponGroupCombat guns, ShipArcadeController controller)
         { world = map; economy = account; docking = port; player = flagship; weapons = guns; movement = controller; }
 
-        private int FactionIndex() => Mathf.Abs(docking.DockedPort.Cell.x % 3 + docking.DockedPort.Cell.y % 3) % 3;
+        private int FactionIndex() => BoatshipsFactions.OfPort(docking.DockedPort.Cell);
 
         private void Update()
         {
             if (world == null || economy.ActiveSeed != world.Seed || Time.time < nextTick) return;
             nextTick = Time.time + 0.5f;
             CampaignProgress progress = economy.Campaign;
-            weapons.UpgradeDamageMultiplier = 1f + progress.cannonLevel * 0.2f;
-            movement.UpgradeSpeedMultiplier = 1f + progress.sailLevel * 0.1f;
+            weapons.UpgradeDamageMultiplier = 1f + progress.cannonLevel * 0.2f + BoatshipsCharacter.GunneryBonus;
+            movement.UpgradeSpeedMultiplier = 1f + progress.sailLevel * 0.1f + BoatshipsCharacter.SailingBonus;
             player.Hull.HullHealthMultiplier = 1f + progress.hullLevel * 0.25f;
             int factionReputation = FactionIndex() == 0 ? progress.merchantReputation :
                 FactionIndex() == 1 ? progress.navyReputation : progress.freePortReputation;
-            economy.TradingDiscount = docking.IsDocked ? Mathf.Min(0.2f, factionReputation * 0.002f) : 0f;
+            economy.TradingDiscount = docking.IsDocked ?
+                Mathf.Min(0.2f, factionReputation * 0.002f + BoatshipsCharacter.TradeBonus) : 0f;
             if (!docking.IsDocked && world.TryNearestIsland(player.transform.position, out var island))
             {
                 Vector2 delta = island.Center - new Vector2(player.transform.position.x, player.transform.position.z);

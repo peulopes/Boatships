@@ -64,6 +64,19 @@ namespace Boatships
             retreatAtHullFraction = kind == EncounterKind.Patrol ? 0.12f : 0.3f;
         }
 
+        /// <summary>Points this ship's AI at another vessel (used for AI-vs-AI crew battles).
+        /// The player's shipyard pause no longer applies once retargeted.</summary>
+        public void SetTarget(ShipCombatTarget target)
+        {
+            player = target;
+            playerShipyard = null;
+            targetPositionSet = false;
+            targetVelocity = Vector3.zero;
+            state = EnemyState.Waiting;
+        }
+
+        public ShipCombatTarget Target => player;
+
         public EnemyState State => state;
         public float HullFraction => self != null && self.TotalVoxels > 0
             ? (float)self.RemainingVoxels / self.TotalVoxels : 0f;

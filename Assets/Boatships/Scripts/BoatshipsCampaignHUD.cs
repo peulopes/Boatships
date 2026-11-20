@@ -31,9 +31,14 @@ namespace Boatships
         private Button newGameButton;
         private Button continueButton;
         private float mainMenuTimeScale = 1f;
+        private BoatshipsCharacter character;
+        private BoatshipsCharacterCreation creation;
         private static readonly string[] tutorial = {
-            "Welcome aboard Boatships. Steer with the left joystick or WASD. Aim with the right joystick, select a weapon group, then Fire.",
-            "Approach a port and tap Dock. The Store sells supplies, the Tavern recruits crew, and the Shipyard fits equipment. Depart when ready.",
+            "Welcome to Boatships. You travel on the world map: tap the sea or an island to set a course, drag to pan, and pinch or scroll to zoom. Time passes while you sail, and your crew eats rations every day.",
+            "Arriving at a port opens the town menu. With a ship, go to the harbor: the Store sells supplies, the Tavern recruits crew, and the Shipyard fits equipment. Without a ship, work aboard AI ships from the tavern, book passage, or save up for a sloop at the shipwright.",
+            "Choose Walk into town to explore a port in first person: walk with the left stick or WASD, look by dragging the right side of the screen (or click to capture the mouse), and walk up to a door and tap Use (E) to visit the tavern, store, shipwright or harbor master.",
+            "Working aboard AI ships pays wages when the voyage ends and trains the skill your role uses. If pirates attack your employer, you choose whether to fight alongside the crew.",
+            "Pirates hunt captains on the map. When one reaches you, fight, try to outrun them, or pay them off. Battles, coasts and pirate havens are played in 3D: steer with the left joystick or WASD, aim with the right joystick, select a weapon group, then Fire. Tap World Map to sail on once no enemy is within 120m.",
             "In Campaign → Hull, choose a grid cell and add or remove blocks. Each addition costs 1 wood. Unsupported sections detach. Heavy equipment increases draft and reduces speed.",
             "Recruit sailors and cycle their duty to Fighter for boarding, Gunner for reload bonuses, Carpenter for repairs, or Sailor for handling. Treat injuries at a port.",
             "Campaign contracts form a repeating chain of naval combat, exploration, delivery, and capture. Accept and claim them while docked. Reputation unlocks upgrades and lowers faction store prices.",
@@ -49,6 +54,15 @@ namespace Boatships
             presentation = mobile; construction = builder; encounters = director; boarding = combat;
             journal = missions; saves = checkpoints; economy = account; docking = port;
         }
+
+        /// <summary>Connects the world-map voyage layer (installed at scene load by BoatshipsVoyageBootstrap).</summary>
+        public void BindVoyage(BoatshipsCharacter captain, BoatshipsCharacterCreation creator)
+        { character = captain; creation = creator; }
+
+        /// <summary>True while the main menu or the campaign panel covers the screen.</summary>
+        public bool BlockingOverlayOpen => open || (mainMenu != null && mainMenu.activeSelf);
+
+        public void OpenCampaignMenu() { if (!open && mainMenu != null && !mainMenu.activeSelf) Toggle(); }
 
         private IEnumerator Start()
         {
@@ -103,6 +117,31 @@ namespace Boatships
                 if (PlayerPrefs.GetInt("Boatships.TutorialComplete", 0) == 0) Toggle();
             }
             else ShowMainMenu();
+            StartCoroutine(RequireCharacter());
+        }
+
+        /// <summary>A world without a character (first launch, or a save from before character creation)
+        /// starts in the character creation screen.</summary>
+        private IEnumerator RequireCharacter()
+        {
+            if (character == null || creation == null) yield break;
+            while (!saves.IsReady || !character.Loaded) yield return null;
+            if (character.HasCharacter) yield break;
+            if (!mainMenu.activeSelf) ShowMainMenu();
+            OpenCreation(false);
+        }
+
+        private void OpenCreation(bool allowBack)
+        {
+            creation.Open(allowBack, null, profile =>
+            {
+                if (!saves.StartNewGame()) return saves.Status;
+                // Applied by BoatshipsCharacter once the freshly generated world has loaded.
+                BoatshipsCharacter.SetPendingProfile(profile);
+                boarding.Abort();
+                Time.timeScale = mainMenuTimeScale;
+                return null;
+            });
         }
 
         private void CreateMainMenu()
@@ -154,6 +193,7 @@ namespace Boatships
 
         private void StartNewGame()
         {
+            if (creation != null && character != null) { OpenCreation(true); return; }
             if (!saves.StartNewGame()) { mainMenuStatus.text = saves.Status; return; }
             boarding.Abort();
             HideMainMenu();

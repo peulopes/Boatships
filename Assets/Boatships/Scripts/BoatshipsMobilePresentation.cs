@@ -22,6 +22,7 @@ namespace Boatships
         private RenderPipelineAsset previousPipeline;
         private UniversalRenderPipelineAsset pipeline;
         public RectTransform SafeRoot { get; private set; }
+        public Canvas Canvas => canvas;
         public int Quality { get; private set; }
         public int FrameRate { get; private set; }
         public float Volume { get; private set; }
