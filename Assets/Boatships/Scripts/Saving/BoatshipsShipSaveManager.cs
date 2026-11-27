@@ -137,7 +137,7 @@ namespace Boatships
             {
                 ShipSaveRecord data = Capture(loadedSeed);
                 string path = PathFor(loadedSeed);
-                string json = JsonUtility.ToJson(data, true);
+                string json = JsonUtility.ToJson(data);
                 // Guard against accidentally saving only starter parts or a non-serializable record.
                 ShipSaveRecord validation = JsonUtility.FromJson<ShipSaveRecord>(json);
                 if (validation == null || validation.installedEquipment == null ||

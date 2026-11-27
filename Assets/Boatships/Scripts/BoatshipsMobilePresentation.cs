@@ -91,7 +91,20 @@ namespace Boatships
             Application.targetFrameRate = FrameRate > 0 ? FrameRate : -1;
             QualitySettings.vSyncCount = 0;
             QualitySettings.shadowDistance = Quality == 0 ? 0f : Quality == 1 ? 45f : 85f;
-            if (pipeline != null) pipeline.renderScale = Quality == 0 ? 0.7f : Quality == 1 ? 0.85f : 1f;
+            if (pipeline != null)
+            {
+                pipeline.renderScale = Quality == 0 ? 0.7f : Quality == 1 ? 0.85f : 1f;
+                // Shadow cost scales with cascades: the low-poly scene reads fine with fewer.
+                pipeline.shadowDistance = QualitySettings.shadowDistance;
+                pipeline.shadowCascadeCount = Quality == 0 ? 1 : Quality == 1 ? 2 : 4;
+            }
+            // Soft shadow filtering only at High; hard shadows are much cheaper to sample.
+            Light sun = RenderSettings.sun;
+            if (sun == null)
+                foreach (Light light in FindObjectsByType<Light>(FindObjectsSortMode.None))
+                    if (light.type == LightType.Directional) { sun = light; break; }
+            if (sun != null)
+                sun.shadows = Quality == 0 ? LightShadows.None : Quality == 1 ? LightShadows.Hard : LightShadows.Soft;
             if (ocean != null)
             {
                 ocean.SetResolution(Quality == 0 ? 24 : Quality == 1 ? 36 : 48);

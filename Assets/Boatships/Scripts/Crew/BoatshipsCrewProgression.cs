@@ -503,7 +503,7 @@ namespace Boatships
                 var file = new CrewProgressFile { seed = seed };
                 foreach (SailorState sailor in states.Values) file.sailors.Add(sailor);
                 string path = SavePath(seed);
-                BoatshipsSaveStore.Write(path, JsonUtility.ToJson(file, true));
+                BoatshipsSaveStore.Write(path, JsonUtility.ToJson(file));
                 LastSaveSucceeded = true;
                 return true;
             }

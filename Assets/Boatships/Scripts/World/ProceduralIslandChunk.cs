@@ -96,14 +96,13 @@ namespace Boatships
             {
                 if (!TryDecorationPoint(site, worldSeed, random, 0.6f, 99f, out Vector3 point)) continue;
                 float size = Mathf.Lerp(0.6f, shape == IslandShape.Peak || shape == IslandShape.Ridge ? 1.8f : 1.1f, (float)random.NextDouble());
-                GameObject pebble = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                GameObject pebble = BoatshipsPrimitives.Create(PrimitiveType.Cube);
                 pebble.name = "Low Poly Rock";
                 pebble.transform.SetParent(transform, false);
                 pebble.transform.localPosition = point + Vector3.up * (0.2f * size);
                 pebble.transform.localRotation = Quaternion.Euler((float)random.NextDouble() * 30f, (float)random.NextDouble() * 180f, 15f);
                 pebble.transform.localScale = new Vector3(0.8f, 0.5f, 0.6f) * size;
                 pebble.GetComponent<MeshRenderer>().sharedMaterial = stone;
-                Destroy(pebble.GetComponent<Collider>());
             }
             if (shape == IslandShape.Mesa || shape == IslandShape.Ridge || shape == IslandShape.Peak ||
                 (shape == IslandShape.Crescent && site.Biome != IslandBiome.Tropical))
@@ -113,6 +112,10 @@ namespace Boatships
                 AddPort(site, worldSeed, sand, bark, stone, port);
             else if (site.Kind != IslandKind.Deserted)
                 AddLandmark(site, worldSeed, port, pirate, treasure);
+            // Hundreds of trunk, frond and rock primitives become one renderer per material.
+            BoatshipsTown harbour = GetComponent<BoatshipsTown>();
+            Transform townRoot = harbour != null ? harbour.Root : null;
+            BoatshipsMeshBatcher.Combine(transform, townRoot != null ? new[] { townRoot } : null);
         }
 
         private static void AddTriangle(int a, int b, int c, Vector3[] positions, List<int>[] indices, float rockLine)
@@ -437,13 +440,12 @@ namespace Boatships
 
         private void AddTree(Vector3 basePoint, float scale, Material bark, Material leaves)
         {
-            GameObject trunk = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            GameObject trunk = BoatshipsPrimitives.Create(PrimitiveType.Cylinder);
             trunk.name = "Tree Trunk";
             trunk.transform.SetParent(transform, false);
             trunk.transform.localPosition = basePoint + Vector3.up * (0.75f * scale);
             trunk.transform.localScale = new Vector3(0.17f * scale, 0.75f * scale, 0.17f * scale);
             trunk.GetComponent<MeshRenderer>().sharedMaterial = bark;
-            Destroy(trunk.GetComponent<Collider>());
 
             GameObject crown = new GameObject("Low Poly Canopy", typeof(MeshFilter), typeof(MeshRenderer));
             crown.transform.SetParent(transform, false);
@@ -468,7 +470,7 @@ namespace Boatships
             {
                 Quaternion tilt = Quaternion.Euler(lean * (i + 1) * 0.6f, 0f, 0f);
                 Vector3 axis = tilt * Vector3.up;
-                GameObject piece = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                GameObject piece = BoatshipsPrimitives.Create(PrimitiveType.Cylinder);
                 piece.name = "Palm Trunk";
                 piece.transform.SetParent(palm, false);
                 piece.transform.localPosition = point + axis * segment * 0.5f;
@@ -476,7 +478,6 @@ namespace Boatships
                 float girth = 0.16f * scale * (1f - i * 0.08f);
                 piece.transform.localScale = new Vector3(girth, segment * 0.52f, girth);
                 piece.GetComponent<MeshRenderer>().sharedMaterial = bark;
-                Destroy(piece.GetComponent<Collider>());
                 point += axis * segment;
             }
             int fronds = 7;
@@ -487,25 +488,23 @@ namespace Boatships
                 pivot.localPosition = point;
                 pivot.localRotation = Quaternion.Euler(0f, i * 360f / fronds + (float)random.NextDouble() * 15f, 0f) *
                     Quaternion.Euler(-12f + (float)random.NextDouble() * 30f, 0f, 0f);
-                GameObject leaf = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                GameObject leaf = BoatshipsPrimitives.Create(PrimitiveType.Cube);
                 leaf.name = "Palm Leaf";
                 leaf.transform.SetParent(pivot, false);
                 leaf.transform.localPosition = new Vector3(0f, -0.12f * scale, 0.55f * scale);
                 leaf.transform.localRotation = Quaternion.Euler(18f, 0f, 0f);
                 leaf.transform.localScale = new Vector3(0.32f * scale, 0.03f * scale, 1.15f * scale);
                 leaf.GetComponent<MeshRenderer>().sharedMaterial = leaves;
-                Destroy(leaf.GetComponent<Collider>());
             }
             for (int i = 0; i < 3; i++)
             {
-                GameObject nut = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                GameObject nut = BoatshipsPrimitives.Create(PrimitiveType.Sphere);
                 nut.name = "Coconut";
                 nut.transform.SetParent(palm, false);
                 float a = i * 2.1f;
                 nut.transform.localPosition = point + new Vector3(Mathf.Sin(a) * 0.1f, -0.12f, Mathf.Cos(a) * 0.1f) * scale;
                 nut.transform.localScale = Vector3.one * 0.13f * scale;
                 nut.GetComponent<MeshRenderer>().sharedMaterial = bark;
-                Destroy(nut.GetComponent<Collider>());
             }
         }
 
@@ -534,14 +533,13 @@ namespace Boatships
                     {
                         float tierHeight = height * (tier == 0 ? 0.45f : tier == 1 ? 0.33f : 0.22f);
                         float tierWidth = width * (1f - tier * 0.22f);
-                        GameObject block = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                        GameObject block = BoatshipsPrimitives.Create(PrimitiveType.Cube);
                         block.name = "Sea Stack Rock";
                         block.transform.SetParent(stack, false);
                         block.transform.localPosition = new Vector3(((float)random.NextDouble() - 0.5f) * 0.2f, y + tierHeight * 0.5f, 0f);
                         block.transform.localRotation = Quaternion.Euler(((float)random.NextDouble() - 0.5f) * 10f, tier * 25f, ((float)random.NextDouble() - 0.5f) * 10f);
                         block.transform.localScale = new Vector3(tierWidth, tierHeight, tierWidth * 0.85f);
                         block.GetComponent<MeshRenderer>().sharedMaterial = rock;
-                        Destroy(block.GetComponent<Collider>());
                         y += tierHeight * 0.92f;
                     }
                     break;
@@ -557,13 +555,12 @@ namespace Boatships
             Material lava = BiomeMaterial(source, new Color(1f, 0.38f, 0.08f));
             lava.EnableKeyword("_EMISSION");
             lava.SetColor("_EmissionColor", new Color(1f, 0.35f, 0.05f) * 2.2f);
-            GameObject pool = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            GameObject pool = BoatshipsPrimitives.Create(PrimitiveType.Cylinder);
             pool.name = "Crater Lava";
             pool.transform.SetParent(transform, false);
             pool.transform.localPosition = new Vector3(0f, Height(site, seed, 0f, 0f) + 0.25f, 0f);
             pool.transform.localScale = new Vector3(site.Radius * 0.2f, 0.05f, site.Radius * 0.2f);
             pool.GetComponent<MeshRenderer>().sharedMaterial = lava;
-            Destroy(pool.GetComponent<Collider>());
         }
 
         /// <summary>Compass bearing (degrees) from the island centre to its harbour.</summary>
@@ -649,14 +646,13 @@ namespace Boatships
                 Transform pivot = new GameObject("Fort Cannon " + (i + 1)).transform;
                 pivot.SetParent(fort, false);
                 pivot.localPosition = position;
-                GameObject barrel = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                GameObject barrel = BoatshipsPrimitives.Create(PrimitiveType.Cylinder);
                 barrel.name = "Iron barrel";
                 barrel.transform.SetParent(pivot, false);
                 barrel.transform.localPosition = Vector3.forward * 0.8f;
                 barrel.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
                 barrel.transform.localScale = new Vector3(0.45f, 0.9f, 0.45f);
                 barrel.GetComponent<MeshRenderer>().sharedMaterial = dark;
-                Destroy(barrel.GetComponent<Collider>());
                 muzzles[i] = new GameObject("Muzzle").transform;
                 muzzles[i].SetParent(pivot, false);
                 muzzles[i].localPosition = Vector3.forward * 1.8f;
@@ -667,13 +663,12 @@ namespace Boatships
 
         private static Transform Block(string name, Transform parent, Vector3 position, Vector3 size, Material material)
         {
-            GameObject block = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            GameObject block = BoatshipsPrimitives.Create(PrimitiveType.Cube);
             block.name = name;
             block.transform.SetParent(parent, false);
             block.transform.localPosition = position;
             block.transform.localScale = size;
             block.GetComponent<MeshRenderer>().sharedMaterial = material;
-            Destroy(block.GetComponent<Collider>());
             return block.transform;
         }
 
@@ -684,20 +679,18 @@ namespace Boatships
                 site.Kind == IslandKind.PirateBaseSite ? pirate : treasure;
             Vector3 top = LandmarkPoint(site, seed);
             float y = top.y;
-            GameObject pole = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            GameObject pole = BoatshipsPrimitives.Create(PrimitiveType.Cylinder);
             pole.name = site.Kind + " Placeholder Marker";
             pole.transform.SetParent(transform, false);
             pole.transform.localPosition = new Vector3(top.x, y + 1.6f, top.z);
             pole.transform.localScale = new Vector3(0.15f, 1.6f, 0.15f);
             pole.GetComponent<MeshRenderer>().sharedMaterial = chosen;
-            Destroy(pole.GetComponent<Collider>());
-            GameObject flag = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            GameObject flag = BoatshipsPrimitives.Create(PrimitiveType.Cube);
             flag.name = "Marker Flag";
             flag.transform.SetParent(transform, false);
             flag.transform.localPosition = new Vector3(top.x + 0.6f, y + 2.7f, top.z);
             flag.transform.localScale = new Vector3(1.2f, 0.6f, 0.12f);
             flag.GetComponent<MeshRenderer>().sharedMaterial = chosen;
-            Destroy(flag.GetComponent<Collider>());
         }
 
         /// <summary>Highest ground near the middle of the island, for flags and markers.</summary>

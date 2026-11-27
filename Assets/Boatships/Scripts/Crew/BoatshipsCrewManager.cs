@@ -593,7 +593,7 @@ namespace Boatships
                 foreach (KeyValuePair<string, CrewDuty> entry in dutyByKey)
                     data.assignments.Add(new Assignment { crewKey = entry.Key, duty = entry.Value });
                 string path = SavePath(activeSeed);
-                BoatshipsSaveStore.Write(path, JsonUtility.ToJson(data, true));
+                BoatshipsSaveStore.Write(path, JsonUtility.ToJson(data));
                 LastSaveSucceeded = true;
             }
             catch (Exception ex)

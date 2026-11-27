@@ -622,7 +622,7 @@ namespace Boatships
             string path = SavePath(activeSeed);
             try
             {
-                BoatshipsSaveStore.Write(path, JsonUtility.ToJson(state, true));
+                BoatshipsSaveStore.Write(path, JsonUtility.ToJson(state));
                 return true;
             }
             catch (Exception ex)

@@ -66,6 +66,9 @@ namespace Boatships
         private bool permanent;
         private readonly List<GameObject> hiddenClutter = new List<GameObject>();
         private static readonly List<BoatshipsTown> Harbours = new List<BoatshipsTown>();
+        /// <summary>Named parts the harbour checks look up; merging keeps their (empty) objects.</summary>
+        private static readonly HashSet<string> KeptParts = new HashSet<string> { "Walls", "Roof", "Pier" };
+        public Transform Root => root != null ? root.transform : null;
         private static readonly HashSet<string> Clutter = new HashSet<string> { "Tree Trunk", "Low Poly Canopy", "Palm Tree", "Low Poly Rock" };
         private readonly Dictionary<long, Material> materials = new Dictionary<long, Material>();
         private readonly List<Vector3> occupied = new List<Vector3>(); // (x, radius, z)
@@ -170,6 +173,8 @@ namespace Boatships
             BuildBackStreets(plaza, inland, landing);
             BuildWaterfront(landing, inland, sideways);
             BuildPeople(plaza, inland, landing, sideways);
+            // Thousands of cobbles, beams and trims become one renderer per material; townsfolk stay animated.
+            BoatshipsMeshBatcher.Combine(root.transform, null, KeptParts);
 
             Vector2 spawn2 = Vector2.Lerp(pierStart, landing, 0.5f);
             spawn = new Vector3(spawn2.x, 0.6f, spawn2.y);
@@ -998,13 +1003,12 @@ namespace Boatships
         private GameObject Prim(PrimitiveType type, string name, Transform parent, Vector3 position, Quaternion rotation,
             Vector3 scale, Color color, bool collider = false, int glow = 0)
         {
-            GameObject part = GameObject.CreatePrimitive(type);
+            GameObject part = BoatshipsPrimitives.Create(type, collider);
             part.name = name;
             part.transform.SetParent(parent, false);
             part.transform.localPosition = position;
             part.transform.localRotation = rotation;
             part.transform.localScale = scale;
-            if (!collider) Destroy(part.GetComponent<Collider>());
             part.GetComponent<Renderer>().sharedMaterial = Material(color, glow);
             return part;
         }
