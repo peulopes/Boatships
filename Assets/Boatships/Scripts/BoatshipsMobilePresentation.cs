@@ -89,7 +89,9 @@ namespace Boatships
         private void ApplySettings()
         {
             Application.targetFrameRate = FrameRate > 0 ? FrameRate : -1;
-            QualitySettings.vSyncCount = 0;
+            // "0" used to mean uncapped with V-Sync off, rendering hundreds of frames nobody sees; it now follows
+            // the display's refresh rate instead.
+            QualitySettings.vSyncCount = FrameRate > 0 ? 0 : 1;
             QualitySettings.shadowDistance = Quality == 0 ? 0f : Quality == 1 ? 45f : 85f;
             if (pipeline != null)
             {

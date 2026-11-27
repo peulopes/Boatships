@@ -14,7 +14,10 @@ namespace Boatships
     {
         private Mesh terrainMesh;
         private Mesh treeCrownMesh;
-        private readonly List<Material> biomeMaterials = new List<Material>();
+        // Shared by every island: tinted biome materials and the canopy mesh used to be created per island
+        // each time it streamed in.
+        private static readonly Dictionary<long, Material> biomeMaterials = new Dictionary<long, Material>();
+        private static Mesh sharedCrownMesh;
 
         public void Build(ArchipelagoWorld.IslandSite site, int resolution, int worldSeed,
             Material sand, Material grass, Material rock, Material bark,
@@ -77,7 +80,8 @@ namespace Boatships
             collider.sharedMesh = terrainMesh;
 
             System.Random random = new System.Random(site.DetailSeed);
-            treeCrownMesh = CreateCone(8);
+            if (sharedCrownMesh == null) sharedCrownMesh = CreateCone(8);
+            treeCrownMesh = sharedCrownMesh;
             DecorationRange(shape, out float minY, out float maxY);
             bool palms = site.Biome == IslandBiome.Tropical &&
                 (shape == IslandShape.Atoll || shape == IslandShape.Lowland || shape == IslandShape.Crescent || shape == IslandShape.Twin);
@@ -408,8 +412,11 @@ namespace Boatships
         private Material BiomeMaterial(Material source, Color color)
         {
             if (source == null) return null;
+            Color32 c = color;
+            long key = ((long)source.GetInstanceID() << 32) ^ (((long)c.r << 24) | ((long)c.g << 16) | ((long)c.b << 8) | c.a);
+            if (biomeMaterials.TryGetValue(key, out Material cached) && cached != null) return cached;
             Material instance = new Material(source) { color = color };
-            biomeMaterials.Add(instance);
+            biomeMaterials[key] = instance;
             return instance;
         }
 
@@ -734,8 +741,7 @@ namespace Boatships
         private void OnDestroy()
         {
             if (terrainMesh != null) Destroy(terrainMesh);
-            if (treeCrownMesh != null) Destroy(treeCrownMesh);
-            foreach (Material material in biomeMaterials) if (material != null) Destroy(material);
+            // The canopy mesh and biome materials are shared between islands and kept for the session.
         }
     }
 }

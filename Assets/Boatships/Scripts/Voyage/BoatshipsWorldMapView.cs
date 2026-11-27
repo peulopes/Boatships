@@ -26,6 +26,7 @@ namespace Boatships
         private const int TextureSize = 512;
 
         private BoatshipsTravelController travel;
+        private float nextLocalHud;
         private ArchipelagoWorld world;
         private BoatshipsCampaignHUD hud;
         private Canvas mapCanvas;
@@ -312,7 +313,12 @@ namespace Boatships
             localCanvas.enabled = !onMap && !blocked && travel.Live && !travel.FirstPersonActive;
             menuCanvas.enabled = !blocked;
             HandleHotkeys(onMap, blocked);
-            if (!onMap) { UpdateLocalHud(); return; }
+            if (!onMap)
+            {
+                // Text-only readout: a few refreshes a second is plenty and avoids per-frame string building.
+                if (Time.unscaledTime >= nextLocalHud) { nextLocalHud = Time.unscaledTime + 0.1f; UpdateLocalHud(); }
+                return;
+            }
             if (blocked) return;
             if (textureSeed != world.Seed && world.IslandCount > 0) GenerateTerrain();
             if (textureSeed != world.Seed) return;

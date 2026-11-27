@@ -43,7 +43,7 @@ namespace Boatships
                 if (keyboard.tKey.wasPressedThisFrame) JumpToNearestIsland();
                 if (keyboard.homeKey.wasPressedThisFrame) ReturnToStart();
             }
-            if (world == null || ship == null || label == null || Time.time < nextRefresh) return;
+            if (world == null || ship == null || label == null || !label.isActiveAndEnabled || Time.time < nextRefresh) return;
             nextRefresh = Time.time + 0.25f;
             string nearest = "None";
             if (world.TryNearestIsland(ship.position, out ArchipelagoWorld.IslandSite site))

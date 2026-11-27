@@ -118,14 +118,18 @@ namespace Boatships
             return true;
         }
 
+        // Scratch collections for the connectivity flood fill, reused across hits.
+        private static readonly HashSet<Vector3Int> visited = new HashSet<Vector3Int>();
+        private static readonly HashSet<Vector3Int> retained = new HashSet<Vector3Int>();
+        private static readonly List<Vector3Int> largest = new List<Vector3Int>();
+        private static readonly List<Vector3Int> section = new List<Vector3Int>();
+        private static readonly Queue<Vector3Int> queue = new Queue<Vector3Int>();
+        private static readonly Vector3Int[] offsets = { Vector3Int.right, Vector3Int.left, Vector3Int.up,
+            Vector3Int.down, new Vector3Int(0, 0, 1), new Vector3Int(0, 0, -1) };
+
         private void RemoveDisconnectedSections(List<Vector3> debris = null)
         {
-            var visited = new HashSet<Vector3Int>();
-            var largest = new List<Vector3Int>();
-            var section = new List<Vector3Int>();
-            var queue = new Queue<Vector3Int>();
-            Vector3Int[] offsets = { Vector3Int.right, Vector3Int.left, Vector3Int.up,
-                Vector3Int.down, new Vector3Int(0, 0, 1), new Vector3Int(0, 0, -1) };
+            visited.Clear(); largest.Clear(); section.Clear(); queue.Clear();
             for (int x = 0; x < definition.Width; x++)
             for (int y = 0; y < definition.Height; y++)
             for (int z = 0; z < definition.Length; z++)
@@ -144,9 +148,10 @@ namespace Boatships
                         if (HasBlock(next.x, next.y, next.z) && visited.Add(next)) queue.Enqueue(next);
                     }
                 }
-                if (section.Count > largest.Count) largest = new List<Vector3Int>(section);
+                if (section.Count > largest.Count) { largest.Clear(); largest.AddRange(section); }
             }
-            var retained = new HashSet<Vector3Int>(largest);
+            retained.Clear();
+            foreach (Vector3Int cell in largest) retained.Add(cell);
             foreach (Vector3Int cell in visited)
                 if (!retained.Contains(cell))
                 {

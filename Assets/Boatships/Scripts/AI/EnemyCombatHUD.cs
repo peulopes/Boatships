@@ -27,7 +27,7 @@ namespace Boatships
 
         private void Update()
         {
-            if (label == null || Time.time < nextRefresh) return;
+            if (label == null || !label.isActiveAndEnabled || Time.time < nextRefresh) return; // hidden: skip the string work
             nextRefresh = Time.time + 0.15f;
             bool sailing = shipyard == null || !shipyard.InShipyard;
             label.text = sailing

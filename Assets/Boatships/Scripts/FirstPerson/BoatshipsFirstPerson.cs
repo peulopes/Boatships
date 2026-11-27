@@ -473,15 +473,30 @@ namespace Boatships
             rect.anchoredPosition = offset;
         }
 
+        private int shownPromptState = -1, shownHealth = int.MinValue + 1, shownKills = -1;
+        private FpsInteractable shownFocus;
+
         private void UpdateHud()
         {
             bool combat = mode == Mode.Deck;
-            string keys = Cursor.lockState == CursorLockMode.Locked ? "" : "\n<color=#B8A27A>Click to look around  ·  Esc opens the menu</color>";
-            if (mounted != null)
-                promptText.text = (mounted.Ready ? "Aim and fire" : "Reloading…") + "  —  [Left click] fire   [E] leave the cannon" + keys;
-            else if (focused != null) promptText.text = focused.Prompt + "  [E]" + keys;
-            else promptText.text = combat ? "[Left click] attack   [Right mouse] block   [Space] jump" + keys : keys.TrimStart('\n');
-            healthText.text = combat ? "Health " + Mathf.CeilToInt(Health) + (Kills > 0 ? "\nFoes downed " + Kills : "") : "";
+            bool locked = Cursor.lockState == CursorLockMode.Locked;
+            // The prompt and health lines only change on events; rebuild their strings only then (not every frame).
+            int promptState = (mounted != null ? (mounted.Ready ? 1 : 2) : focused != null ? 3 : combat ? 4 : 5) * 2 + (locked ? 1 : 0);
+            if (promptState != shownPromptState || focused != shownFocus)
+            {
+                shownPromptState = promptState; shownFocus = focused;
+                string keys = locked ? "" : "\n<color=#B8A27A>Click to look around  ·  Esc opens the menu</color>";
+                if (mounted != null)
+                    promptText.text = (mounted.Ready ? "Aim and fire" : "Reloading…") + "  —  [Left click] fire   [E] leave the cannon" + keys;
+                else if (focused != null) promptText.text = focused.Prompt + "  [E]" + keys;
+                else promptText.text = combat ? "[Left click] attack   [Right mouse] block   [Space] jump" + keys : keys.TrimStart('\n');
+            }
+            int health = combat ? Mathf.CeilToInt(Health) : int.MinValue;
+            if (health != shownHealth || Kills != shownKills)
+            {
+                shownHealth = health; shownKills = Kills;
+                healthText.text = combat ? "Health " + health + (Kills > 0 ? "\nFoes downed " + Kills : "") : "";
+            }
             statusText.text = status;
             flashAlpha = Mathf.MoveTowards(flashAlpha, 0f, Time.deltaTime * 1.5f);
             flash.color = new Color(0.8f, 0f, 0f, flashAlpha);

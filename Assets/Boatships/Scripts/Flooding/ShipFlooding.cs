@@ -75,6 +75,8 @@ namespace Boatships
             shipyard = customization;
         }
 
+        private int scannedRevision = -1;
+
         private void Awake()
         {
             if (hull == null) hull = GetComponentInChildren<VoxelHull>(true);
@@ -99,9 +101,11 @@ namespace Boatships
                 return;
             }
 
-            if (Time.time >= nextScan && !sinking)
+            // Breaches only change when the hull does; rescan on a new hull revision instead of 5x a second.
+            if (Time.time >= nextScan && !sinking && hull.Revision != scannedRevision)
             {
                 nextScan = Time.time + 0.18f;
+                scannedRevision = hull.Revision;
                 ScanDamagedExternalSkin();
             }
 
@@ -250,6 +254,7 @@ namespace Boatships
 
         private void ClearWaterAndBreaches(bool restoreControllers)
         {
+            scannedRevision = -1; // force a fresh breach scan
             for (int i = 0; i < compartments.Length; ++i) compartments[i] = 0f;
             openings.Clear();
             patches.Clear();

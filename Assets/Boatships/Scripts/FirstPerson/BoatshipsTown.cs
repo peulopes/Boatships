@@ -70,7 +70,8 @@ namespace Boatships
         private static readonly HashSet<string> KeptParts = new HashSet<string> { "Walls", "Roof", "Pier" };
         public Transform Root => root != null ? root.transform : null;
         private static readonly HashSet<string> Clutter = new HashSet<string> { "Tree Trunk", "Low Poly Canopy", "Palm Tree", "Low Poly Rock" };
-        private readonly Dictionary<long, Material> materials = new Dictionary<long, Material>();
+        // Shared by every town (all harbours use the same palette), so building a town creates no materials.
+        private static readonly Dictionary<long, Material> materials = new Dictionary<long, Material>();
         private readonly List<Vector3> occupied = new List<Vector3>(); // (x, radius, z)
         private ArchipelagoWorld.IslandSite site;
         private int seed;
@@ -189,8 +190,6 @@ namespace Boatships
             foreach (GameObject item in hiddenClutter) if (item != null) item.SetActive(true);
             hiddenClutter.Clear();
             if (!permanent) islandChunk = null;
-            foreach (Material material in materials.Values) if (material != null) Destroy(material);
-            materials.Clear();
             occupied.Clear();
         }
 
@@ -1013,7 +1012,7 @@ namespace Boatships
             return part;
         }
 
-        /// <summary>One material per colour (and glow level) per town, so the many small parts share materials.</summary>
+        /// <summary>One material per colour (and glow level), shared by all towns, so the many small parts share materials.</summary>
         private Material Material(Color color, int glow)
         {
             Color32 c = color;

@@ -46,6 +46,10 @@ namespace Boatships
         private readonly Dictionary<Vector2Int, IslandSite> sites = new Dictionary<Vector2Int, IslandSite>();
         private readonly Dictionary<Vector2Int, GameObject> activeChunks = new Dictionary<Vector2Int, GameObject>();
         private readonly List<Vector2Int> stale = new List<Vector2Int>();
+        // Flat cell → island lookup for shore checks (much cheaper than hashing nine Vector2Int keys).
+        private IslandSite[] siteGrid = new IslandSite[0];
+        private bool[] siteGridUsed = new bool[0];
+        private int gridLower;
         // Islands that left the streaming area stay built but hidden for a while, so sailing back and forth
         // over a cell edge does not rebuild their terrain, collider and harbour town every time.
         private readonly Dictionary<Vector2Int, GameObject> cachedChunks = new Dictionary<Vector2Int, GameObject>();
@@ -170,6 +174,15 @@ namespace Boatships
                     Biome = campaignBiomes ? (IslandBiome)((uint)StableHash(seed + 91, x, z) % 3u) : IslandBiome.Tropical
                 });
             }
+            gridLower = lower;
+            siteGrid = new IslandSite[cellsPerAxis * cellsPerAxis];
+            siteGridUsed = new bool[siteGrid.Length];
+            foreach (IslandSite site in sites.Values)
+            {
+                int index = (site.Cell.y - lower) * cellsPerAxis + (site.Cell.x - lower);
+                siteGrid[index] = site;
+                siteGridUsed[index] = true;
+            }
             if (started) UpdateLoadedChunks();
         }
 
@@ -230,10 +243,18 @@ namespace Boatships
                     activeChunks.Add(c, cached);
                     continue;
                 }
-                // The island the player is in is needed at once; the neighbours follow one per frame.
-                if (c == cell) BuildChunk(c);
+                // The island the player is at (e.g. just moored at its pier) is needed at once;
+                // the others follow one per frame.
+                if (c == cell || NearIsland(c)) BuildChunk(c);
                 else pendingBuilds.Add(c);
             }
+        }
+
+        private bool NearIsland(Vector2Int c)
+        {
+            if (player == null || !sites.TryGetValue(c, out IslandSite island)) return false;
+            float reach = island.Radius + 40f;
+            return (new Vector2(player.position.x, player.position.z) - island.Center).sqrMagnitude < reach * reach;
         }
 
         private void BuildChunk(Vector2Int c)
@@ -292,17 +313,36 @@ namespace Boatships
             position.x = Mathf.Clamp(position.x, -edge, edge);
             position.z = Mathf.Clamp(position.z, -edge, edge);
             Vector2 p = new Vector2(position.x, position.z);
-            foreach (IslandSite island in sites.Values)
+            if (clearance < cellSize * 0.5f && siteGrid.Length == cellsPerAxis * cellsPerAxis)
             {
-                Vector2 difference = p - island.Center;
-                float radius = island.Radius * 0.78f + clearance;
-                if (difference.sqrMagnitude >= radius * radius) continue;
-                Vector2 direction = difference.sqrMagnitude < 0.0001f ? Vector2.down : difference.normalized;
-                p = island.Center + direction * radius;
+                // An island (centre jittered by at most 11% of a cell, radius at most 32%) can only reach points in
+                // its own and the neighbouring cells, so only those nine cells need checking. Called many times a
+                // frame by map parties and escorts.
+                Vector2Int cell = PositionToCell(new Vector3(p.x, 0f, p.y));
+                for (int z = cell.y - 1 - gridLower; z <= cell.y + 1 - gridLower; z++)
+                {
+                    if (z < 0 || z >= cellsPerAxis) continue;
+                    for (int x = cell.x - 1 - gridLower; x <= cell.x + 1 - gridLower; x++)
+                    {
+                        if (x < 0 || x >= cellsPerAxis) continue;
+                        int index = z * cellsPerAxis + x;
+                        if (index < siteGridUsed.Length && siteGridUsed[index]) p = PushOut(p, siteGrid[index], clearance);
+                    }
+                }
             }
+            else foreach (IslandSite island in sites.Values) p = PushOut(p, island, clearance);
             position.x = Mathf.Clamp(p.x, -edge, edge);
             position.z = Mathf.Clamp(p.y, -edge, edge);
             return position;
+        }
+
+        private static Vector2 PushOut(Vector2 p, IslandSite island, float clearance)
+        {
+            Vector2 difference = p - island.Center;
+            float radius = island.Radius * 0.78f + clearance;
+            if (difference.sqrMagnitude >= radius * radius) return p;
+            Vector2 direction = difference.sqrMagnitude < 0.0001f ? Vector2.down : difference.normalized;
+            return island.Center + direction * radius;
         }
 
         private Vector2Int PositionToCell(Vector3 worldPosition)

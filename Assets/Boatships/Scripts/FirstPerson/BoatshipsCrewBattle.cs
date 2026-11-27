@@ -121,7 +121,8 @@ namespace Boatships
             if (captain != null && captain.Target != attacker) captain.SetTarget(attacker);
             float distance = Vector3.Distance(attacker.transform.position, employerShip.transform.position);
             if (!boarded && distance < 16f && Time.time - startedAt > 12f) Board(attacker);
-            int boardersAlive = boarders.FindAll(b => b != null && b.Alive).Count;
+            int boardersAlive = 0;
+            foreach (BoatshipsDeckFighter b in boarders) if (b != null && b.Alive) boardersAlive++;
             if (boarded && boardersAlive == 0) { Finish(true, "The boarders were thrown back and the attackers fled!"); return; }
             if (distance > 95f) { Finish(true, "The attackers fell away astern."); return; }
             if (Time.time - startedAt > TimeLimit)

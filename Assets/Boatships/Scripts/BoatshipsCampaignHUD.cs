@@ -269,7 +269,7 @@ namespace Boatships
                 }
                 MakeButton("Quality — " + new[] { "Low", "Medium", "High" }[presentation.Quality], content,
                     () => { presentation.CycleQuality(); BuildPage(); });
-                MakeButton("Frame rate — " + (presentation.FrameRate > 0 ? presentation.FrameRate + " FPS" : "Unlimited"), content,
+                MakeButton("Frame rate — " + (presentation.FrameRate > 0 ? presentation.FrameRate + " FPS" : "Display (V-Sync)"), content,
                     () => { presentation.CycleFrameRate(); BuildPage(); });
                 MakeSlider("Audio Volume", 0f, 1f, presentation.Volume, false, presentation.SetVolume);
             }
