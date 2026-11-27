@@ -200,6 +200,72 @@ namespace Boatships
 
         public static float Height(ArchipelagoWorld.IslandSite site, int seed, float localX, float localZ)
         {
+            float raw = ShapeHeight(site, seed, localX, localZ);
+            return site.Kind == IslandKind.PortSite ? TownTerraceHeight(site, seed, localX, localZ, raw) : raw;
+        }
+
+        // ───────────────────────────── Town terrace ─────────────────────────────
+        // Port islands level a shelf of ground behind the harbour beach so the town, its square and the fort
+        // stand on (almost) flat land. A short ramp runs from the shelf down to the beach and pier.
+
+        private struct TownTerrace { public Vector2 Centre, Outward; public float Level, Reference, RampStart, RampEnd; }
+
+        private const float TerraceInset = 3.6f;      // shelf centre, inland from the natural shore
+        private const float TerraceFlatRadius = 10f;  // fully levelled (covers the square and both house rings)
+        private const float TerraceFadeRadius = 14.5f; // back to natural terrain
+        private static readonly Dictionary<(int, int, Vector2, float), TownTerrace> Terraces =
+            new Dictionary<(int, int, Vector2, float), TownTerrace>();
+
+        /// <summary>Island-local centre of the levelled town shelf on a port island.</summary>
+        public static Vector2 TownCentre(ArchipelagoWorld.IslandSite site, int seed) => TerraceOf(site, seed).Centre;
+
+        private static TownTerrace TerraceOf(ArchipelagoWorld.IslandSite site, int seed)
+        {
+            var key = (site.DetailSeed, seed, site.Center, site.Radius);
+            if (Terraces.TryGetValue(key, out TownTerrace terrace)) return terrace;
+            if (Terraces.Count > 256) Terraces.Clear();
+            Quaternion facing = PortRotation(site);
+            Vector3 direction = facing * Vector3.forward;
+            Vector2 outward = new Vector2(direction.x, direction.z);
+            float shore = PortShoreDistance(site, seed, facing, true);
+            Vector2 centre = outward * Mathf.Max(site.Radius * 0.2f, shore - TerraceInset);
+            float reference = ShapeHeight(site, seed, centre.x, centre.y);
+            float sum = reference;
+            for (int i = 0; i < 8; i++)
+            {
+                float a = i * Mathf.PI * 0.25f;
+                sum += ShapeHeight(site, seed, centre.x + Mathf.Sin(a) * 5f, centre.y + Mathf.Cos(a) * 5f);
+            }
+            terrace = new TownTerrace
+            {
+                Centre = centre, Outward = outward, Reference = reference,
+                Level = Mathf.Clamp(sum / 9f, 1.4f, 2.5f),
+                RampStart = 1.4f
+            };
+            terrace.RampEnd = Mathf.Max(terrace.RampStart + 1.8f, shore - centre.magnitude);
+            Terraces[key] = terrace;
+            return terrace;
+        }
+
+        private static float TownTerraceHeight(ArchipelagoWorld.IslandSite site, int seed, float x, float z, float raw)
+        {
+            TownTerrace t = TerraceOf(site, seed);
+            Vector2 p = new Vector2(x, z);
+            float distance = (p - t.Centre).magnitude;
+            if (distance >= TerraceFadeRadius) return raw;
+            // Nearly flat: keep a whisper of the natural undulation so the shelf does not look machined.
+            float shelf = t.Level + Mathf.Clamp((raw - t.Reference) * 0.08f, -0.25f, 0.25f);
+            // Seaward of the shelf, slope evenly down to the beach (0.35 at the natural shore) and the sea floor.
+            float along = Vector2.Dot(p - t.Centre, t.Outward);
+            float slope = (t.Level - 0.35f) / (t.RampEnd - t.RampStart);
+            float target = Mathf.Max(-1.6f, shelf - slope * Mathf.Max(0f, along - t.RampStart));
+            // Never raise new land out at the ship navigation circle.
+            if (target > raw) target = Mathf.Lerp(raw, target, Smooth(site.Radius * 0.8f, site.Radius * 0.7f, p.magnitude));
+            return Mathf.Lerp(raw, target, Smooth(TerraceFadeRadius, TerraceFlatRadius, distance));
+        }
+
+        private static float ShapeHeight(ArchipelagoWorld.IslandSite site, int seed, float localX, float localZ)
+        {
             float worldX = site.Center.x + localX;
             float worldZ = site.Center.y + localZ;
             float noise = Mathf.PerlinNoise(
@@ -413,7 +479,7 @@ namespace Boatships
         {
             if (source == null) return null;
             Color32 c = color;
-            long key = ((long)source.GetInstanceID() << 32) ^ (((long)c.r << 24) | ((long)c.g << 16) | ((long)c.b << 8) | c.a);
+            long key = ((long)source.GetEntityId().GetHashCode() << 32) ^ (((long)c.r << 24) | ((long)c.g << 16) | ((long)c.b << 8) | c.a);
             if (biomeMaterials.TryGetValue(key, out Material cached) && cached != null) return cached;
             Material instance = new Material(source) { color = color };
             biomeMaterials[key] = instance;
@@ -578,14 +644,15 @@ namespace Boatships
 
         private static Quaternion PortRotation(ArchipelagoWorld.IslandSite site) => Quaternion.Euler(0f, PortYaw(site), 0f);
 
-        private static float PortShoreDistance(ArchipelagoWorld.IslandSite site, int seed, Quaternion facing)
+        private static float PortShoreDistance(ArchipelagoWorld.IslandSite site, int seed, Quaternion facing, bool natural = false)
         {
             Vector3 direction = facing * Vector3.forward;
             // Search from the sea inland so hills cannot be mistaken for the outer coast.
             for (float distance = site.Radius; distance > 0f; distance -= 0.25f)
             {
                 Vector3 sample = direction * distance;
-                if (Height(site, seed, sample.x, sample.z) >= 0.35f) return distance;
+                float height = natural ? ShapeHeight(site, seed, sample.x, sample.z) : Height(site, seed, sample.x, sample.z);
+                if (height >= 0.35f) return distance;
             }
             return site.Radius * 0.6f;
         }
@@ -596,87 +663,15 @@ namespace Boatships
             Quaternion facing = PortRotation(site);
             Vector3 outward = facing * Vector3.forward;
             float shore = PortShoreDistance(site, seed, facing);
-            Material windows = BiomeMaterial(stone, new Color(0.08f, 0.22f, 0.28f));
             Transform settlement = new GameObject("Port Village and Pier").transform;
             settlement.SetParent(transform, false);
             // Anchor the harbour on the coast, rather than at the island centre.
             settlement.localPosition = outward * shore;
             settlement.localRotation = facing;
-            // The walkable harbour town (pier, square, shops, houses, townsfolk) is the port's settlement,
-            // seen from the sea and walked in first person alike.
+            // The walkable harbour town (pier, square, shops, fort, houses, townsfolk) is the port's settlement,
+            // seen from the sea and walked in first person alike. Its fort guards the water off the pier.
             BoatshipsTown town = gameObject.AddComponent<BoatshipsTown>();
-            town.BuildHarbour(site, seed, this);
-            AddFort(site, seed, settlement, facing, stone, timber, windows);
-        }
-
-        private void AddFort(ArchipelagoWorld.IslandSite site, int seed, Transform settlement,
-            Quaternion harbourFacing, Material stone, Material timber, Material dark)
-        {
-            // Place the bastion beside the waterfront crescent, clear of houses and the pier.
-            Quaternion facing = harbourFacing * Quaternion.Euler(0f, 100f, 0f);
-            float coast = PortShoreDistance(site, seed, facing);
-            Vector3 centre = facing * (Vector3.forward * Mathf.Max(0f, coast - 3.5f));
-            float low = float.PositiveInfinity, high = float.NegativeInfinity;
-            for (int corner = 0; corner < 4; corner++)
-            {
-                Vector3 sample = centre + facing * new Vector3(corner % 2 == 0 ? -3f : 3f,
-                    0f, corner < 2 ? -3f : 3f);
-                float height = Height(site, seed, sample.x, sample.z);
-                low = Mathf.Min(low, height);
-                high = Mathf.Max(high, height);
-            }
-            Transform fort = new GameObject("Harbour Fort").transform;
-            fort.SetParent(settlement, false);
-            Vector3 islandPosition = new Vector3(centre.x, high + 0.2f, centre.z);
-            fort.position = transform.TransformPoint(islandPosition);
-            fort.rotation = transform.rotation * facing;
-            Block("Fort foundation", fort, new Vector3(0f, (low - high) * 0.5f - 0.1f, 0f),
-                new Vector3(6.6f, high - low + 0.4f, 6.6f), stone);
-            Block("Stone bastion", fort, Vector3.up * 1.25f, new Vector3(6f, 2.5f, 6f), stone);
-            Block("Battery deck", fort, Vector3.up * 2.6f, new Vector3(6.4f, 0.25f, 6.4f), stone);
-            Block("Fort gate", fort, new Vector3(0f, 0.9f, -3.05f), new Vector3(1.3f, 1.8f, 0.15f), timber);
-            for (int side = -1; side <= 1; side += 2)
-            {
-                Block("Fort parapet", fort, new Vector3(side * 3f, 3f, 0f), new Vector3(0.4f, 0.7f, 6.4f), stone);
-                Block("Fort parapet", fort, new Vector3(0f, 3f, side * 3f), new Vector3(6.4f, 0.7f, 0.4f), stone);
-                for (int i = -2; i <= 2; i++)
-                {
-                    Block("Battlement", fort, new Vector3(side * 3f, 3.6f, i * 1.3f), new Vector3(0.6f, 0.6f, 0.6f), stone);
-                    Block("Battlement", fort, new Vector3(i * 1.3f, 3.6f, side * 3f), new Vector3(0.6f, 0.6f, 0.6f), stone);
-                }
-            }
-            Transform[] muzzles = new Transform[2];
-            for (int i = 0; i < muzzles.Length; i++)
-            {
-                Vector3 position = new Vector3(i == 0 ? -1.4f : 1.4f, 3.5f, 1.2f);
-                Block("Cannon carriage", fort, position + Vector3.down * 0.5f, new Vector3(0.8f, 0.5f, 1.4f), timber);
-                Transform pivot = new GameObject("Fort Cannon " + (i + 1)).transform;
-                pivot.SetParent(fort, false);
-                pivot.localPosition = position;
-                GameObject barrel = BoatshipsPrimitives.Create(PrimitiveType.Cylinder);
-                barrel.name = "Iron barrel";
-                barrel.transform.SetParent(pivot, false);
-                barrel.transform.localPosition = Vector3.forward * 0.8f;
-                barrel.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
-                barrel.transform.localScale = new Vector3(0.45f, 0.9f, 0.45f);
-                barrel.GetComponent<MeshRenderer>().sharedMaterial = dark;
-                muzzles[i] = new GameObject("Muzzle").transform;
-                muzzles[i].SetParent(pivot, false);
-                muzzles[i].localPosition = Vector3.forward * 1.8f;
-            }
-            HarbourFort battery = fort.gameObject.AddComponent<HarbourFort>();
-            battery.Configure(settlement.TransformPoint(Vector3.forward * 6f), muzzles, FindAnyObjectByType<OceanWaves>());
-        }
-
-        private static Transform Block(string name, Transform parent, Vector3 position, Vector3 size, Material material)
-        {
-            GameObject block = BoatshipsPrimitives.Create(PrimitiveType.Cube);
-            block.name = name;
-            block.transform.SetParent(parent, false);
-            block.transform.localPosition = position;
-            block.transform.localScale = size;
-            block.GetComponent<MeshRenderer>().sharedMaterial = material;
-            return block.transform;
+            town.BuildHarbour(site, seed, this, settlement.TransformPoint(Vector3.forward * 6f));
         }
 
         private void AddLandmark(ArchipelagoWorld.IslandSite site, int seed,

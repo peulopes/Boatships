@@ -76,6 +76,7 @@ namespace Boatships
         private ArchipelagoWorld.IslandSite site;
         private int seed;
         private System.Random rng;
+        private Vector3? fortCover; // harbour towns only: where the fort's battery protects ships
 
         public bool Built => root != null;
 
@@ -105,11 +106,13 @@ namespace Boatships
         }
 
         /// <summary>Builds this port island's permanent harbour town as part of the island chunk.</summary>
-        public void BuildHarbour(ArchipelagoWorld.IslandSite island, int worldSeed, ProceduralIslandChunk owner)
+        /// <param name="defendedWaters">Centre of the harbour waters the town's fort guards.</param>
+        public void BuildHarbour(ArchipelagoWorld.IslandSite island, int worldSeed, ProceduralIslandChunk owner, Vector3 defendedWaters)
         {
             Vector2 mooring = MooringPoint(island);
             permanent = true;
             islandChunk = owner;
+            fortCover = defendedWaters;
             List<FpsInteractable> built = Build(island, worldSeed, new Vector3(mooring.x, 0f, mooring.y),
                 service => Handler?.Invoke(service), out Vector3 spawn, out float facing);
             root.transform.SetParent(owner.transform, true);
@@ -163,6 +166,7 @@ namespace Boatships
                 occupied.Add(new Vector3(spot.x, service == TownService.Shipwright ? 2.1f : 1.5f, spot.y));
                 doors.Add(new FpsInteractable { Position = () => door, Prompt = Prompts[i], Radius = 0.9f, Use = () => use(service) });
             }
+            if (fortCover.HasValue) BuildFort(plaza, inland, fortCover.Value);
 
             // The moored ship itself: step back aboard to set sail.
             Vector3 boarding = pierA;
@@ -574,6 +578,141 @@ namespace Boatships
                     occupied.Add(new Vector3(spot.x, 1.3f, spot.y));
                     if (++built >= 12) return;
                 }
+        }
+
+        // ───────────────────────────── Harbour fort ─────────────────────────────
+
+        /// <summary>The town's stone keep on the waterfront beside the square: door onto the town, a cannon
+        /// battery on its roof covering the harbour. Built at village scale, in the same stone as the houses.</summary>
+        private void BuildFort(Vector2 plaza, Vector2 inland, Vector3 defendedWaters)
+        {
+            const float w = 2.6f, d = 2.6f, wallHeight = 2.5f;
+            // Seaward of the tavern or the harbour master, whichever flank stands on dry ground.
+            Vector2 spot = plaza + Rotate(inland, -108f) * 6.6f;
+            foreach (Vector2 candidate in new[]
+                { spot, plaza + Rotate(inland, 108f) * 6.6f, plaza + Rotate(inland, -95f) * 6.8f, plaza + Rotate(inland, 95f) * 6.8f })
+            {
+                if (H(candidate) < 0.6f || Blocked(candidate, 1.9f)) continue;
+                spot = candidate;
+                break;
+            }
+            Vector2 toPlaza = (plaza - spot).normalized;
+            Vector2 seaward = -inland;
+
+            // Footprint: rest on the lowest corner so the masonry reaches the ground all round.
+            float lowest = H(spot);
+            for (int i = 0; i < 8; i++) lowest = Mathf.Min(lowest, H(spot + Rotate(Vector2.up, i * 45f) * (w * 0.72f)));
+            float floor = lowest - 0.15f;
+            float g = Mathf.Clamp(H(spot + toPlaza * (d * 0.5f + 0.35f)) - floor, 0.15f, 1.2f);
+            float top = g + wallHeight;
+
+            Transform t = new GameObject("Harbour Fort").transform;
+            t.SetParent(root.transform, false);
+            t.SetPositionAndRotation(new Vector3(spot.x, floor, spot.y), Quaternion.LookRotation(new Vector3(toPlaza.x, 0f, toPlaza.y)));
+            occupied.Add(new Vector3(spot.x, 2.1f, spot.y));
+
+            // Masonry: battered plinth, keep walls, string course and corner turrets.
+            Prim(PrimitiveType.Cube, "Fort Plinth", t, new Vector3(0f, (g + 0.35f) * 0.5f, 0f), Id, new Vector3(w + 0.3f, g + 0.35f, d + 0.3f), DarkStone, true);
+            Prim(PrimitiveType.Cube, "Walls", t, new Vector3(0f, top * 0.5f, 0f), Id, new Vector3(w, top, d), Stone, true);
+            Prim(PrimitiveType.Cube, "String Course", t, new Vector3(0f, g + 1.45f, 0f), Id, new Vector3(w + 0.06f, 0.07f, d + 0.06f), DarkStone);
+            Prim(PrimitiveType.Cube, "Roof Deck", t, new Vector3(0f, top + 0.03f, 0f), Id, new Vector3(w + 0.04f, 0.06f, d + 0.04f), DarkStone);
+            foreach (int sx in new[] { -1, 1 })
+                foreach (int sz in new[] { -1, 1 })
+                {
+                    Vector3 corner = new Vector3(sx * w * 0.5f, 0f, sz * d * 0.5f);
+                    float turret = top + 0.45f;
+                    Prim(PrimitiveType.Cylinder, "Corner Turret", t, corner + Vector3.up * (turret * 0.5f), Id, new Vector3(0.62f, turret * 0.5f, 0.62f), Stone);
+                    Prim(PrimitiveType.Cylinder, "Turret Corbel", t, corner + Vector3.up * (top + 0.02f), Id, new Vector3(0.74f, 0.06f, 0.74f), DarkStone);
+                    for (int m = 0; m < 4; m++)
+                    {
+                        float a = m * 90f + 45f;
+                        Vector3 merlon = corner + Quaternion.Euler(0f, a, 0f) * new Vector3(0f, 0f, 0.27f) + Vector3.up * (turret + 0.1f);
+                        Prim(PrimitiveType.Cube, "Turret Merlon", t, merlon, Quaternion.Euler(0f, a, 0f), new Vector3(0.18f, 0.2f, 0.1f), Stone);
+                    }
+                }
+            // Parapet and merlons, with embrasures left open on the seaward side for the guns.
+            Vector3 seaLocal = t.InverseTransformDirection(new Vector3(seaward.x, 0f, seaward.y));
+            for (int side = 0; side < 4; side++)
+            {
+                Quaternion face = Quaternion.Euler(0f, side * 90f, 0f);
+                Vector3 outward = face * Vector3.forward;
+                bool battery = Vector3.Dot(outward, seaLocal) > 0.5f;
+                Prim(PrimitiveType.Cube, "Parapet", t, outward * (d * 0.5f - 0.06f) + Vector3.up * (top + 0.2f), face,
+                    new Vector3(w - 0.5f, 0.34f, 0.12f), Stone);
+                for (float x = -0.8f; x <= 0.81f; x += 0.4f)
+                {
+                    if (battery && Mathf.Abs(Mathf.Abs(x) - 0.6f) < 0.25f) continue;
+                    Prim(PrimitiveType.Cube, "Merlon", t, face * new Vector3(x, top + 0.5f, d * 0.5f - 0.06f), face, new Vector3(0.22f, 0.26f, 0.14f), Stone);
+                }
+                // Arrow slits on every face, two storeys.
+                foreach (float y in new[] { g + 0.95f, g + 1.95f })
+                    foreach (float x in side == 0 && y < g + 1.4f ? new[] { -0.85f, 0.85f } : new[] { -0.6f, 0.6f })
+                    {
+                        Prim(PrimitiveType.Cube, "Slit Surround", t, face * new Vector3(x, y, d * 0.5f + 0.008f), face, new Vector3(0.16f, 0.44f, 0.02f), DarkStone);
+                        Prim(PrimitiveType.Cube, "Arrow Slit", t, face * new Vector3(x, y, d * 0.5f + 0.02f), face, new Vector3(0.05f, 0.34f, 0.01f), new Color(0.05f, 0.05f, 0.06f));
+                    }
+            }
+
+            // Gate onto the town square.
+            float fz = d * 0.5f;
+            Prim(PrimitiveType.Cube, "Gate Arch", t, new Vector3(0f, g + 0.56f, fz + 0.015f), Id, new Vector3(0.82f, 1.12f, 0.04f), DarkStone);
+            Prim(PrimitiveType.Cube, "Keystone", t, new Vector3(0f, g + 1.14f, fz + 0.03f), Id, new Vector3(0.18f, 0.16f, 0.05f), Stone);
+            Prim(PrimitiveType.Cube, "Gate", t, new Vector3(0f, g + 0.48f, fz + 0.035f), Id, new Vector3(0.62f, 0.96f, 0.025f), new Color(0.3f, 0.18f, 0.09f));
+            foreach (float y in new[] { 0.2f, 0.5f, 0.8f })
+                Prim(PrimitiveType.Cube, "Gate Strap", t, new Vector3(0f, g + y, fz + 0.05f), Id, new Vector3(0.62f, 0.04f, 0.008f), Iron);
+            Prim(PrimitiveType.Sphere, "Gate Ring", t, new Vector3(0.18f, g + 0.46f, fz + 0.06f), Id, Vector3.one * 0.05f, Iron);
+            Prim(PrimitiveType.Cube, "Gate Step", t, new Vector3(0f, g - 0.04f, fz + 0.2f), Id, new Vector3(0.9f, 0.08f, 0.4f), Stone);
+            Sign(t, "HARBOUR FORT", g + 1.32f, fz + 0.04f, 1.25f);
+            foreach (int sx in new[] { -1, 1 }) WallLantern(t, new Vector3(sx * 0.62f, g + 0.82f, fz));
+
+            // Roof battery: two guns trained on the harbour. HarbourFort swings each whole pivot to aim.
+            Transform[] muzzles = new Transform[2];
+            Quaternion toSea = Quaternion.LookRotation(new Vector3(seaward.x, 0f, seaward.y));
+            Vector3 seaRight = Vector3.Cross(Vector3.up, new Vector3(seaward.x, 0f, seaward.y));
+            for (int i = 0; i < muzzles.Length; i++)
+            {
+                Vector3 world = t.TransformPoint(Vector3.up * (top + 0.48f)) + new Vector3(seaward.x, 0f, seaward.y) * 0.6f +
+                    seaRight * (i == 0 ? -0.6f : 0.6f);
+                Transform pivot = new GameObject("Fort Cannon " + (i + 1)).transform;
+                pivot.SetParent(t, false);
+                pivot.SetPositionAndRotation(world, toSea);
+                Transform carriage = new GameObject("Cannon Carriage").transform;
+                carriage.SetParent(t, false);
+                carriage.SetPositionAndRotation(world, toSea);
+                Prim(PrimitiveType.Cube, "Carriage", carriage, new Vector3(0f, -0.28f, -0.05f), Id, new Vector3(0.34f, 0.3f, 0.5f), DarkWood);
+                foreach (int s in new[] { -1, 1 })
+                    Prim(PrimitiveType.Cylinder, "Truck Wheel", carriage, new Vector3(s * 0.19f, -0.36f, 0.05f), Quaternion.Euler(0f, 0f, 90f),
+                        new Vector3(0.16f, 0.02f, 0.16f), Timber);
+                Prim(PrimitiveType.Cylinder, "Iron Barrel", pivot, new Vector3(0f, 0f, 0.3f), Quaternion.Euler(90f, 0f, 0f), new Vector3(0.17f, 0.38f, 0.17f), Iron);
+                Prim(PrimitiveType.Cylinder, "Muzzle Ring", pivot, new Vector3(0f, 0f, 0.66f), Quaternion.Euler(90f, 0f, 0f), new Vector3(0.21f, 0.03f, 0.21f), Iron);
+                Prim(PrimitiveType.Sphere, "Cascabel", pivot, new Vector3(0f, 0f, -0.1f), Id, Vector3.one * 0.12f, Iron);
+                muzzles[i] = new GameObject("Muzzle").transform;
+                muzzles[i].SetParent(pivot, false);
+                muzzles[i].localPosition = Vector3.forward * 0.8f;
+            }
+            // Shot locker and colours.
+            Vector3 deck = new Vector3(0f, top + 0.06f, 0f) - seaLocal * 0.65f;
+            for (int i = 0; i < 4; i++)
+                Prim(PrimitiveType.Sphere, "Roundshot", t, deck + new Vector3((i % 3 - 1) * 0.1f, 0.05f + (i == 3 ? 0.08f : 0f), i == 3 ? 0f : 0.02f), Id,
+                    Vector3.one * 0.1f, Iron);
+            Vector3 pole = new Vector3(-w * 0.5f, top + 0.45f, -d * 0.5f);
+            Prim(PrimitiveType.Cylinder, "Flag Pole", t, pole + Vector3.up * 0.9f, Id, new Vector3(0.04f, 0.9f, 0.04f), Cream);
+            Prim(PrimitiveType.Sphere, "Pole Finial", t, pole + Vector3.up * 1.82f, Id, Vector3.one * 0.06f, Brass);
+            Prim(PrimitiveType.Cube, "Flag", t, pole + new Vector3(0.33f, 1.58f, 0f), Id, new Vector3(0.62f, 0.4f, 0.015f), new Color(0.15f, 0.25f, 0.55f));
+            Prim(PrimitiveType.Cube, "Flag Cross", t, pole + new Vector3(0.33f, 1.58f, 0f), Id, new Vector3(0.62f, 0.07f, 0.02f), Cream);
+            Prim(PrimitiveType.Cube, "Flag Cross", t, pole + new Vector3(0.24f, 1.58f, 0f), Id, new Vector3(0.07f, 0.4f, 0.02f), Cream);
+
+            // A sentry at the gate and powder kegs against the wall.
+            Transform sentry = new GameObject("Fort Sentry").transform;
+            sentry.SetParent(t, false);
+            sentry.localPosition = new Vector3(0.75f, DecorY(t, 0.75f, fz + 0.45f), fz + 0.45f);
+            BoatshipsHumanoid.Build(sentry, new Color(0.55f, 0.14f, 0.12f), BoatshipsFirstPerson.HumanHeight, false, rng.Next(), HumanoidHat.Tricorn);
+            float kx = -w * 0.5f - 0.3f;
+            Barrel(t, new Vector3(kx, DecorY(t, kx, 0.35f), 0.35f), true);
+            Barrel(t, new Vector3(kx, DecorY(t, kx, 0.05f), 0.05f), true);
+
+            HarbourFort fort = t.gameObject.AddComponent<HarbourFort>();
+            fort.Configure(defendedWaters, muzzles, FindAnyObjectByType<OceanWaves>());
         }
 
         /// <summary>Builds a house whose front (+Z) faces <paramref name="front"/>. g is the local height of the door sill.</summary>

@@ -4,21 +4,30 @@ using UnityEngine;
 
 namespace Boatships
 {
-    public enum HullHardpointType { Mast, Rudder, Propulsion }
+    /// <summary>What a hull slot accepts. Values are serialized: append new types, never reorder.</summary>
+    public enum HullHardpointType { Mast, Rudder, Propulsion, Cannon, Helm, Upgrade }
 
+    /// <summary>A fixed location on a ship style: where its mast, helm, rudder, cannon ports and upgrades go.</summary>
     [Serializable]
     public sealed class HullHardpoint
     {
         public string id;
         public HullHardpointType type;
         public Vector3 localPosition;
+        [Tooltip("Facing in degrees around the hull's up axis: 0 = bow, 90 = starboard, -90 = port, 180 = stern.")]
+        public float yaw;
 
-        public HullHardpoint(string id, HullHardpointType type, Vector3 localPosition)
+        public HullHardpoint(string id, HullHardpointType type, Vector3 localPosition, float yaw = 0f)
         {
             this.id = id;
             this.type = type;
             this.localPosition = localPosition;
+            this.yaw = yaw;
         }
+
+        /// <summary>Slots that sit on the deck (and so keep deck-grid equipment clear of them).</summary>
+        public bool OnDeck => type == HullHardpointType.Mast || type == HullHardpointType.Cannon ||
+            type == HullHardpointType.Helm || type == HullHardpointType.Upgrade;
     }
 
     /// <summary>
@@ -50,6 +59,30 @@ namespace Boatships
         public float BlockSize => blockSize;
         public float BlockHealth => blockHealth;
         public IReadOnlyList<HullHardpoint> Hardpoints => hardpoints;
+
+        public int CountSlots(HullHardpointType type)
+        {
+            int count = 0;
+            foreach (HullHardpoint slot in hardpoints) if (slot.type == type) count++;
+            return count;
+        }
+
+        /// <summary>The basic ship style: a single-masted sloop with a stern helm and four cannon ports,
+        /// two on each side. Deck top is at y = 0.5.</summary>
+        public static List<HullHardpoint> StarterSloopLayout() => new List<HullHardpoint>
+        {
+            new HullHardpoint("main_mast", HullHardpointType.Mast, new Vector3(0f, 0.40f, 0.45f)),
+            new HullHardpoint("stern_rudder", HullHardpointType.Rudder, new Vector3(0f, -0.10f, -2.30f)),
+            new HullHardpoint("helm", HullHardpointType.Helm, new Vector3(0f, 0.5f, -1.7f)),
+            new HullHardpoint("cannon_port_fore", HullHardpointType.Cannon, new Vector3(-0.6f, 0.5f, 1.15f), -90f),
+            new HullHardpoint("cannon_port_aft", HullHardpointType.Cannon, new Vector3(-0.6f, 0.5f, -0.55f), -90f),
+            new HullHardpoint("cannon_starboard_fore", HullHardpointType.Cannon, new Vector3(0.6f, 0.5f, 1.15f), 90f),
+            new HullHardpoint("cannon_starboard_aft", HullHardpointType.Cannon, new Vector3(0.6f, 0.5f, -0.55f), 90f),
+            // Upgrade slots (storage, armour, cabin) on the foredeck and between the aft guns and the helm;
+            // both have room for the 3×3 cabin.
+            new HullHardpoint("upgrade_foredeck", HullHardpointType.Upgrade, new Vector3(0f, 0.5f, 1.6f)),
+            new HullHardpoint("upgrade_afterdeck", HullHardpointType.Upgrade, new Vector3(0f, 0.5f, -0.95f))
+        };
 
         /// <summary>Predefined curved/tapered volume; can later be replaced with imported voxel layouts.</summary>
         public bool ContainsBlock(int x, int y, int z)
@@ -86,13 +119,17 @@ namespace Boatships
             lengthBlocks = 19;
             blockSize = 0.25f;
             blockHealth = 40f;
-            hardpoints = new List<HullHardpoint>
-            {
-                new HullHardpoint("main_mast", HullHardpointType.Mast, new Vector3(0f, 0.40f, 0.45f)),
-                new HullHardpoint("stern_rudder", HullHardpointType.Rudder, new Vector3(0f, -0.10f, -2.30f))
-            };
+            hardpoints = StarterSloopLayout();
         }
 #endif
+
+        private void OnEnable()
+        {
+            // Sloops made before ship styles (or before upgrade slots) get the current basic layout.
+            if (hullId == "starter_sloop" &&
+                (CountSlots(HullHardpointType.Cannon) == 0 || CountSlots(HullHardpointType.Upgrade) == 0))
+                hardpoints = StarterSloopLayout();
+        }
 
         private void OnValidate()
         {

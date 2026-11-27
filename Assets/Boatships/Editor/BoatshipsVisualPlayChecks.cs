@@ -114,25 +114,34 @@ namespace Boatships.Editor
                 Transform harbour = island.transform.Find("Port Village and Pier");
                 Check(harbour != null, "Port island has no harbour.");
                 Check(harbour.localPosition.magnitude > site.Radius * 0.45f, "Harbour is in the island centre.");
-                HarbourFort fort = harbour.GetComponentInChildren<HarbourFort>();
-                Check(fort != null && fort.transform.Find("Fort Cannon 1/Muzzle") != null &&
-                    fort.transform.Find("Fort Cannon 2/Muzzle") != null, "Port has no armed coastal fort.");
                 bearings.Add(Mathf.RoundToInt(harbour.localEulerAngles.y));
                 // The port's settlement is the walkable harbour town (it replaced the old block houses and pier).
                 BoatshipsTown town = island.GetComponent<BoatshipsTown>();
                 Check(town != null && town.Built && town.Doors.Count == 5, "Port has no walkable harbour town.");
                 Transform townRoot = island.transform.Find("Port Town " + site.Cell);
                 Check(townRoot != null, "Harbour town is not part of the island.");
+                // The fort is one of the town's buildings, armed and guarding the harbour.
+                Transform fortBuilding = townRoot.Find("Harbour Fort");
+                HarbourFort fort = fortBuilding != null ? fortBuilding.GetComponent<HarbourFort>() : null;
+                Check(fort != null && fortBuilding.Find("Walls") != null && fortBuilding.Find("Fort Cannon 1/Muzzle") != null &&
+                    fortBuilding.Find("Fort Cannon 2/Muzzle") != null, "Harbour town has no armed fort.");
+                Check(Vector3.Distance(fort.transform.position, townRoot.Find("Tavern").position) < 12f,
+                    "Harbour fort stands apart from the town.");
+                float lowestFloor = float.PositiveInfinity, highestFloor = float.NegativeInfinity;
                 foreach (string shop in new[] { "Tavern", "General Store", "Shipwright", "Harbor Master" })
                 {
                     Transform building = townRoot.Find(shop);
                     Check(building != null && building.Find("Walls") != null && building.Find("Roof") != null,
                         "Harbour town is missing its " + shop + ".");
+                    lowestFloor = Mathf.Min(lowestFloor, building.position.y);
+                    highestFloor = Mathf.Max(highestFloor, building.position.y);
                     Vector3 local = island.transform.InverseTransformPoint(building.position);
                     Check(new Vector2(local.x, local.z).magnitude > site.Radius * 0.15f,
                         "Town building placed in the island centre: island " + i + ", distance " +
                         new Vector2(local.x, local.z).magnitude + ", radius " + site.Radius);
                 }
+                Check(highestFloor - lowestFloor < 0.8f, "Harbour town is not on level ground: island " + i +
+                    ", floors differ by " + (highestFloor - lowestFloor));
                 Transform pier = townRoot.Find("Pier");
                 Check(pier != null && pier.position.y > 0.3f, "Harbour town has no pier above the water.");
                 Check(Vector2.Distance(town.Mooring, site.Center) > site.Radius * 0.78f + 3.2f,

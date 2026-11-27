@@ -170,12 +170,32 @@ namespace Boatships.Editor
                     if (definition.ContainsBlock(x, y, z)) damage.Add(new ShipVoxelRecord { x = x, y = y, z = z, health = 0f });
                 target.Hull.RestoreVoxelDamage(damage);
                 construction.GetComponent<Rigidbody>().position = target.transform.position + target.transform.right * 5f;
-                encounter.defenderHealth = 1f;
+                Check(encounter.crew > 0 && encounter.crewMax >= encounter.crew, "Enemy ship was spawned without a crew.");
+                encounter.crew = 1;
                 await Task.Delay(350);
                 boarding.Begin();
                 Check(boarding.InProgress, "Could not begin boarding a weakened nearby enemy. " + boarding.Status);
                 await Task.Delay(5500);
                 Check(economy.Campaign.captures == 1 && !boarding.InProgress, "Boarding did not capture the enemy vessel.");
+                Check(encounter.captured && encounter.crew == 0 && encounter.AwaitingOrders,
+                    "Killing the whole enemy crew did not leave her captured and awaiting orders.");
+                int crewBefore = economy.Crew.Count;
+                string captainKey = economy.Crew[0].offerKey;
+                Check(economy.AppointCaptain(encounter.id, captainKey) && encounter.InCompany && economy.CompanySize == 1 &&
+                    economy.Crew.Count == crewBefore - 1, "Could not appoint a captain to the captured ship. " + economy.LastMessage);
+                int goldBeforeSale = economy.Gold;
+                int prizeValue = encounter.PrizeValue;
+                Check(director.SellCaptured(encounter.id, out int salePrice) && salePrice == prizeValue &&
+                    economy.Gold == goldBeforeSale + prizeValue && economy.CompanySize == 0 &&
+                    economy.Crew.Count == crewBefore && new List<PortEconomy.CrewMember>(economy.Crew).Exists(member => member.offerKey == captainKey),
+                    "Selling a company ship did not pay out and return her captain. " + economy.LastMessage);
+                encounter.survivedBlade = 2; encounter.survivedCannon = 1; encounter.prisonersResolved = false;
+                Check(economy.TakePrisoners(encounter.id, 2) == 2 && economy.Prisoners.Count == 2 &&
+                    economy.Prisoners[0].wound == Incapacitation.Blade && encounter.prisonersResolved && encounter.Survivors == 0,
+                    "Prisoners were not taken within the limit, fittest first. " + economy.LastMessage);
+                int goldBeforeBounty = economy.Gold;
+                Check(economy.HandOverPrisoners(out int handedOver, out int bounty) && handedOver == 2 &&
+                    economy.Gold == goldBeforeBounty + bounty && economy.Prisoners.Count == 0, "Prisoner bounty was not paid.");
                 int beforeCargo = economy.Gold;
                 director.CollectNearbyCargo();
                 Check(economy.Gold > beforeCargo, "Captured cargo could not be collected.");

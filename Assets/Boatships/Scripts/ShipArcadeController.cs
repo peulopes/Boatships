@@ -64,6 +64,18 @@ namespace Boatships
         {
             // WASD steers; the arrow keys are reserved for cannon aim (WeaponGroupCombat).
             if (ExternalControl) return new Vector2(Mathf.Clamp(ExternalRudder, -1f, 1f), Mathf.Clamp(ExternalThrottle, -1f, 1f));
+            // Captain away from the helm (walking the deck, manning a gun): she holds her course and sail.
+            if (BoatshipsFirstPerson.OnFoot)
+            {
+                if (!holdingCourse)
+                {
+                    holdingCourse = true;
+                    float top = forwardSpeed * Mathf.Max(0.1f, UpgradeSpeedMultiplier * HullSpeedMultiplier);
+                    heldThrottle = Mathf.Clamp(currentSpeed / top, -1f, 1f);
+                }
+                return new Vector2(0f, heldThrottle);
+            }
+            holdingCourse = false;
             Keyboard kb = Keyboard.current;
             if (kb == null || BoatshipsUI.Typing) return Vector2.zero;
 
@@ -71,6 +83,9 @@ namespace Boatships
             float y = (kb.wKey.isPressed ? 1f : 0f) - (kb.sKey.isPressed ? 1f : 0f);
             return Vector2.ClampMagnitude(new Vector2(x, y), 1f);
         }
+
+        private float heldThrottle;
+        private bool holdingCourse;
 
         private void FixedUpdate()
         {

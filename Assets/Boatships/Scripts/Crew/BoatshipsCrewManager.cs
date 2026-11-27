@@ -113,6 +113,15 @@ namespace Boatships
         public event Action<string> CrewCompletedRepair;
         public string SelectedCrewKey => agents.Count == 0 ? null : agents[Mathf.Clamp(selectedIndex, 0, agents.Count - 1)].key;
 
+        /// <summary>Crew aboard and available for a duty (e.g. how many guns have a Gunner).</summary>
+        public int CountOnDuty(CrewDuty duty)
+        {
+            int count = 0;
+            foreach (Agent a in agents)
+                if (a.duty == duty && !a.unavailable && a.visual != null && a.boardingTarget == null) count++;
+            return count;
+        }
+
         public CrewDuty GetCrewDuty(string crewKey)
         {
             foreach (Agent a in agents) if (a.key == crewKey) return a.duty;

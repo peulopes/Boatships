@@ -22,8 +22,27 @@ namespace Boatships
         public Func<bool> Available;
     }
 
+    /// <summary>A gun the first-person player can take command of: aim with the mouse, fire with a click.</summary>
+    public interface IMannedGun
+    {
+        float AimYaw { get; set; }
+        float AimPitch { get; set; }
+        bool Ready { get; }
+        Vector3 WorldPosition { get; }
+        Vector3 ViewPosition { get; }
+        Quaternion ViewRotation { get; }
+        bool Fire();
+        /// <summary>Hand-loaded guns: a ball is being rammed home. Guns loaded by their crew never report loading.</summary>
+        bool Loading => false;
+        float LoadProgress => Ready ? 1f : 0f;
+        /// <summary>Starts loading by hand ([R]). Returns false where the crew does the loading.</summary>
+        bool StartLoading() => false;
+    }
+
+    public enum HandWeapon { Cutlass, Pistol }
+
     /// <summary>First-person view: walking on land (CharacterController) or on a moving ship deck
-    /// (hull-local coordinates), cutlass and block, deck cannons, interactions and a keyboard/mouse HUD.</summary>
+    /// (hull-local coordinates), cutlass and block, flintlock pistol, deck cannons, interactions and a keyboard/mouse HUD.</summary>
     [DefaultExecutionOrder(1000)]
     public sealed class BoatshipsFirstPerson : MonoBehaviour
     {
@@ -61,7 +80,15 @@ namespace Boatships
         private float jumpQueuedAt = float.NegativeInfinity;
         private float swing;
         private float nextAttack;
-        private BoatshipsDeckCannon mounted;
+        private IMannedGun mounted;
+        private Transform viewPistol;
+        private GameObject muzzleFlash;
+        private float flashUntil;
+        private float recoil;
+        private bool pistolLoaded = true;
+        private float reloadDoneAt = float.NegativeInfinity;
+        private const float PistolReloadSeconds = 2.4f;
+        private const float PistolRange = 18f;
         private FpsInteractable focused;
         private float holdProgress;
         private bool holdNeedsRelease;
@@ -115,7 +142,11 @@ namespace Boatships
         public int Kills { get; private set; }
         public bool Contributed { get; private set; }
         public Vector3 DeckLocal => deckLocal;
-        public BoatshipsDeckCannon Mounted => mounted;
+        /// <summary>World position of the player's eyes (where enemy musket fire aims).</summary>
+        public Vector3 EyePosition => cam != null ? cam.transform.position : Vector3.zero;
+        public IMannedGun Mounted => mounted;
+        public HandWeapon Weapon { get; private set; } = HandWeapon.Cutlass;
+        public bool Reloading => Time.time < reloadDoneAt;
         public event Action Downed;
         /// <summary>Standing at the ship's wheel: WASD steers the ship (read <see cref="HelmInput"/>).</summary>
         public bool AtHelm => atHelm;
@@ -123,6 +154,9 @@ namespace Boatships
         public bool KnockedOut => knockedUntil > 0f;
         public DeckSpace CurrentDeck => mode == Mode.Deck ? deck : null;
         public bool Crossing => Time.time - crossStarted < CrossSeconds;
+
+        /// <summary>Credit for helping in a fight without landing a blow (e.g. plugging leaks).</summary>
+        public void MarkContributed() => Contributed = true;
 
         public bool OnDeck(VoxelHull hull) => mode == Mode.Deck && deck != null && deck.Hull == hull;
         public void SetStatus(string text) => status = text ?? "";
@@ -160,6 +194,31 @@ namespace Boatships
             BoatshipsHumanoid.Part(PrimitiveType.Cube, "Hilt", arm.transform, Vector3.zero,
                 new Vector3(0.05f, 0.012f, 0.012f), new Color(0.6f, 0.45f, 0.15f));
             viewSword = arm.transform;
+
+            // Flintlock pistol: walnut stock, iron barrel and lock, brass butt cap.
+            GameObject pistol = new GameObject("View Pistol");
+            pistol.transform.SetParent(eye.transform, false);
+            pistol.transform.localPosition = new Vector3(0.1f, -0.1f, 0.2f);
+            Color walnut = new Color(0.36f, 0.2f, 0.1f), iron = new Color(0.2f, 0.2f, 0.22f), brass = new Color(0.75f, 0.58f, 0.25f);
+            BoatshipsHumanoid.Part(PrimitiveType.Cube, "Stock", pistol.transform, new Vector3(0f, 0f, 0.05f),
+                new Vector3(0.022f, 0.026f, 0.13f), walnut);
+            GameObject grip = BoatshipsHumanoid.Part(PrimitiveType.Cube, "Grip", pistol.transform, new Vector3(0f, -0.035f, -0.025f),
+                new Vector3(0.024f, 0.075f, 0.032f), walnut);
+            grip.transform.localRotation = Quaternion.Euler(-28f, 0f, 0f);
+            BoatshipsHumanoid.Part(PrimitiveType.Cube, "Butt Cap", pistol.transform, new Vector3(0f, -0.07f, -0.045f),
+                new Vector3(0.03f, 0.018f, 0.036f), brass).transform.localRotation = Quaternion.Euler(-28f, 0f, 0f);
+            GameObject tube = BoatshipsHumanoid.Part(PrimitiveType.Cylinder, "Barrel", pistol.transform, new Vector3(0f, 0.012f, 0.13f),
+                new Vector3(0.014f, 0.08f, 0.014f), iron);
+            tube.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+            BoatshipsHumanoid.Part(PrimitiveType.Cube, "Lock", pistol.transform, new Vector3(0.013f, 0.012f, 0.02f),
+                new Vector3(0.006f, 0.02f, 0.04f), iron);
+            BoatshipsHumanoid.Part(PrimitiveType.Cube, "Hammer", pistol.transform, new Vector3(0.008f, 0.03f, 0.005f),
+                new Vector3(0.006f, 0.022f, 0.008f), iron);
+            muzzleFlash = BoatshipsHumanoid.Part(PrimitiveType.Sphere, "Muzzle Flash", pistol.transform, new Vector3(0f, 0.012f, 0.23f),
+                new Vector3(0.05f, 0.05f, 0.08f), new Color(1f, 0.85f, 0.4f));
+            muzzleFlash.SetActive(false);
+            viewPistol = pistol.transform;
+            pistol.SetActive(false);
             rig.SetActive(false);
             BuildHud();
             hudCanvas.gameObject.SetActive(false);
@@ -269,10 +328,23 @@ namespace Boatships
         public void AddInteractable(FpsInteractable interactable) { if (interactable != null) interactables.Add(interactable); }
         public void RemoveInteractable(FpsInteractable interactable) => interactables.Remove(interactable);
 
-        public void Mount(BoatshipsDeckCannon cannon)
+        public void Mount(IMannedGun cannon)
         {
             if (mode != Mode.Deck || cannon == null) return;
             mounted = cannon;
+        }
+
+        public void SelectWeapon(HandWeapon weapon)
+        {
+            if (Weapon == weapon) return;
+            Weapon = weapon;
+            nextAttack = Time.time + 0.25f;
+        }
+
+        private void StartReload()
+        {
+            if (pistolLoaded || Reloading) return;
+            reloadDoneAt = Time.time + PistolReloadSeconds;
         }
 
         public void TakeDamage(float amount, Vector3 from)
@@ -289,6 +361,8 @@ namespace Boatships
         private void Update()
         {
             if (!Active) return;
+            // A gun shot off the deck while manned: step back from it.
+            if (mounted is UnityEngine.Object gun && gun == null) mounted = null;
             bool blocked = hud != null && hud.BlockingOverlayOpen;
             bool menu = view != null && view.MenuOpen;
             if (gameplayCanvas != null) gameplayCanvas.enabled = blocked;
@@ -310,7 +384,8 @@ namespace Boatships
             Keyboard jumpKeys = Keyboard.current;
             if (input && mounted == null && jumpKeys != null && jumpKeys.spaceKey.wasPressedThisFrame) jumpQueuedAt = Time.time;
             Vector2 look = input ? ReadLook() : Vector2.zero;
-            Blocking = input && mounted == null && !atHelm && ReadBlock();
+            Blocking = input && mounted == null && !atHelm && Weapon == HandWeapon.Cutlass && ReadBlock();
+            if (!pistolLoaded && reloadDoneAt > 0f && Time.time >= reloadDoneAt) { pistolLoaded = true; reloadDoneAt = float.NegativeInfinity; }
             HelmInput = atHelm ? move : Vector2.zero;
             if (atHelm)
             {
@@ -363,7 +438,19 @@ namespace Boatships
                 if (mounted != null && keyboard != null && keyboard.rKey.wasPressedThisFrame && mounted.StartLoading()) Contributed = true;
                 // Tab leaves the scene, as in Bannerlord.
                 if (keyboard != null && keyboard.tabKey.wasPressedThisFrame && exitAction != null) exitAction.Invoke();
+                if (keyboard != null && mode == Mode.Deck && mounted == null && !atHelm)
+                {
+                    if (keyboard.digit1Key.wasPressedThisFrame) SelectWeapon(HandWeapon.Cutlass);
+                    if (keyboard.digit2Key.wasPressedThisFrame) SelectWeapon(HandWeapon.Pistol);
+                    if (keyboard.rKey.wasPressedThisFrame && Weapon == HandWeapon.Pistol) StartReload();
+                }
                 Mouse mouse = Mouse.current;
+                if (mode == Mode.Deck && mounted == null && !atHelm && mouse != null && Cursor.lockState == CursorLockMode.Locked)
+                {
+                    float scroll = mouse.scroll.ReadValue().y;
+                    if (Mathf.Abs(scroll) > 0.01f)
+                        SelectWeapon(Weapon == HandWeapon.Cutlass ? HandWeapon.Pistol : HandWeapon.Cutlass);
+                }
                 bool click = mouse != null && Cursor.lockState == CursorLockMode.Locked && mouse.leftButton.wasPressedThisFrame;
                 if (click) Attack();
             }
@@ -373,6 +460,7 @@ namespace Boatships
         private void LateUpdate()
         {
             if (!Active) return;
+            if (mounted is UnityEngine.Object gun && gun == null) mounted = null;
             if (mounted != null)
             {
                 cam.transform.SetPositionAndRotation(mounted.ViewPosition, mounted.ViewRotation);
@@ -391,9 +479,17 @@ namespace Boatships
                 cam.transform.SetPositionAndRotation(rig.transform.position + Vector3.up * EyeHeight, Quaternion.Euler(pitch, yaw, 0f));
             }
             swing = Mathf.Max(0f, swing - Time.deltaTime * 3.2f);
-            viewSword.gameObject.SetActive(mode == Mode.Deck && mounted == null && !atHelm && !KnockedOut);
+            bool armed = mode == Mode.Deck && mounted == null && !atHelm && !KnockedOut;
+            viewSword.gameObject.SetActive(armed && Weapon == HandWeapon.Cutlass);
             viewSword.localRotation = Blocking ? Quaternion.Euler(-10f, -60f, 80f) :
                 Quaternion.Euler(-25f + Mathf.Sin(swing * Mathf.PI) * 85f, -10f + Mathf.Sin(swing * Mathf.PI) * 40f, 0f);
+            viewPistol.gameObject.SetActive(armed && Weapon == HandWeapon.Pistol);
+            recoil = Mathf.Max(0f, recoil - Time.deltaTime * 5f);
+            // Reloading tips the pistol down to ram powder and ball; firing kicks it up.
+            float reload = Reloading ? Mathf.Sin(Mathf.Clamp01(1f - (reloadDoneAt - Time.time) / PistolReloadSeconds) * Mathf.PI) : 0f;
+            viewPistol.localRotation = Quaternion.Euler(reload * 55f - recoil * 22f, reload * -20f, reload * 25f);
+            viewPistol.localPosition = new Vector3(0.1f, -0.1f - reload * 0.05f, 0.2f - recoil * 0.04f);
+            muzzleFlash.SetActive(Time.time < flashUntil);
         }
 
         private void Move(Vector2 input, float dt)
@@ -480,7 +576,9 @@ namespace Boatships
                 if (mounted.Fire()) Contributed = true;
                 return;
             }
-            if (mode != Mode.Deck || Blocking || atHelm || Time.time < nextAttack) return;
+            if (mode != Mode.Deck || atHelm) return;
+            if (Weapon == HandWeapon.Pistol) { FirePistol(); return; }
+            if (Blocking || Time.time < nextAttack) return;
             nextAttack = Time.time + 0.55f / Mathf.Max(0.3f, SwingSpeedMultiplier);
             swing = 1f;
             Vector3 forward = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
@@ -501,6 +599,44 @@ namespace Boatships
             best.TakeHit(16f * DamageMultiplier * (1f + fighting * 0.12f));
             Contributed = true;
             if (!best.Alive) Kills++;
+        }
+
+        /// <summary>One ball, then a reload. Hits the first foe along the sight line, on any deck within range.</summary>
+        private void FirePistol()
+        {
+            if (Reloading || Time.time < nextAttack) return;
+            if (!pistolLoaded) { StartReload(); return; }
+            pistolLoaded = false;
+            nextAttack = Time.time + 0.3f;
+            flashUntil = Time.time + 0.06f;
+            recoil = 1f;
+            int gunnery = character != null ? character.Skill(CharacterSkill.Gunnery) : 0;
+            float spread = Mathf.Lerp(2.2f, 0.6f, Mathf.Clamp01(gunnery / 10f));
+            Vector3 direction = Quaternion.Euler(UnityEngine.Random.Range(-spread, spread), UnityEngine.Random.Range(-spread, spread), 0f) *
+                Vector3.forward;
+            var ray = new Ray(cam.transform.position, cam.transform.rotation * direction);
+            BoatshipsDeckFighter best = null;
+            float bestDistance = PistolRange;
+            foreach (BoatshipsDeckFighter fighter in BoatshipsDeckFighter.All)
+            {
+                if (fighter == null || fighter.Team != 1 || !fighter.Alive) continue;
+                Vector3 chest = fighter.transform.position + fighter.transform.up * (HumanHeight * 0.55f);
+                if (!RayHitsSphere(ray, chest, HumanHeight * 0.3f, out float distance) || distance >= bestDistance) continue;
+                bestDistance = distance; best = fighter;
+            }
+            Contributed = true;
+            if (best == null) return;
+            best.TakeHit(48f * (1f + gunnery * 0.06f), Incapacitation.Firearm);
+            if (!best.Alive) Kills++;
+        }
+
+        private static bool RayHitsSphere(Ray ray, Vector3 centre, float radius, out float distance)
+        {
+            Vector3 toCentre = centre - ray.origin;
+            float along = Vector3.Dot(toCentre, ray.direction);
+            distance = along;
+            if (along < 0f) return false;
+            return (toCentre - ray.direction * along).sqrMagnitude <= radius * radius;
         }
 
         // ───────────────────────────── Input ─────────────────────────────
@@ -604,7 +740,7 @@ namespace Boatships
             return new string('■', filled) + new string('□', 10 - filled);
         }
 
-        private int shownPromptState = -1, shownHealth = int.MinValue + 1, shownKills = -1;
+        private int shownPromptState = -1, shownHealth = int.MinValue + 1, shownKills = -1, shownWeaponState = -1;
         private FpsInteractable shownFocus;
 
         private void UpdateHud()
@@ -612,6 +748,8 @@ namespace Boatships
             bool combat = mode == Mode.Deck;
             bool locked = Cursor.lockState == CursorLockMode.Locked;
             // The prompt and health lines only change on events; rebuild their strings only then (not every frame).
+            bool pistol = combat && Weapon == HandWeapon.Pistol;
+            int pistolState = !pistol ? 0 : Reloading ? 1 : pistolLoaded ? 2 : 3;
             int kind, bucket = 0;
             if (KnockedOut) { kind = 7; bucket = Mathf.CeilToInt(knockedUntil - Time.time); }
             else if (atHelm) kind = 6;
@@ -621,6 +759,7 @@ namespace Boatships
                 if (mounted.Loading) bucket = Mathf.FloorToInt(mounted.LoadProgress * 10f);
             }
             else if (focused != null) { kind = 2; bucket = Mathf.FloorToInt(holdProgress * 10f); }
+            else if (pistol) { kind = 8; bucket = pistolState; }
             else kind = combat ? 1 : 0;
             int promptState = ((kind * 32 + bucket) * 2 + (locked ? 1 : 0));
             if (promptState != shownPromptState || focused != shownFocus)
@@ -635,13 +774,17 @@ namespace Boatships
                         "   [E] leave the cannon" + keys;
                 else if (focused != null)
                     promptText.text = focused.Prompt + (focused.HoldSeconds > 0f ? "  [hold E]" + (holdProgress > 0f ? "  " + Bar(holdProgress) : "") : "  [E]") + keys;
-                else promptText.text = combat ? "[Left click] attack   [Right mouse] block   [Space] jump" + keys : keys.TrimStart('\n');
+                else if (pistol)
+                    promptText.text = (Reloading ? "Reloading the pistol…" : pistolLoaded ? "[Left click] fire" : "[R] reload") +
+                        "   [1] cutlass   [Space] jump" + keys;
+                else promptText.text = combat ? "[Left click] slash   [Right mouse] block   [2] pistol   [Space] jump" + keys : keys.TrimStart('\n');
             }
             int health = combat ? Mathf.CeilToInt(Health) : int.MinValue;
-            if (health != shownHealth || Kills != shownKills)
+            if (health != shownHealth || Kills != shownKills || pistolState != shownWeaponState)
             {
-                shownHealth = health; shownKills = Kills;
-                healthText.text = combat ? "Health " + health + (Kills > 0 ? "\nFoes downed " + Kills : "") : "";
+                shownHealth = health; shownKills = Kills; shownWeaponState = pistolState;
+                string weapon = pistol ? "Flintlock — " + (Reloading ? "reloading" : pistolLoaded ? "loaded" : "empty") : "Cutlass";
+                healthText.text = combat ? "Health " + health + "\n" + weapon + (Kills > 0 ? "\nFoes downed " + Kills : "") : "";
             }
             statusText.text = status;
             flashAlpha = Mathf.MoveTowards(flashAlpha, 0f, Time.deltaTime * 1.5f);
@@ -655,8 +798,8 @@ namespace Boatships
         }
     }
 
-    /// <summary>A deck gun the first-person player or a deck sailor can man: load it by hand, aim, fire.</summary>
-    public sealed class BoatshipsDeckCannon : MonoBehaviour
+    /// <summary>A deck gun the first-person player can man: aim with the look controls, fire, reload.</summary>
+    public sealed class BoatshipsDeckCannon : MonoBehaviour, IMannedGun
     {
         public const float MuzzleSpeed = 22f;
         public const float ShotGravity = 18f;
@@ -780,7 +923,7 @@ namespace Boatships
             AimYaw = Mathf.Clamp(AimYaw, -MaxYaw, MaxYaw);
             AimPitch = Mathf.Clamp(AimPitch, MinPitch, MaxPitch);
             pivot.localRotation = Quaternion.Euler(-AimPitch, AimYaw, 0f);
-            bool aiming = BoatshipsDeckFighter.Player != null && BoatshipsDeckFighter.Player.Mounted == this;
+            bool aiming = BoatshipsDeckFighter.Player != null && ReferenceEquals(BoatshipsDeckFighter.Player.Mounted, this);
             if (arc == null) return;
             arc.enabled = aiming && Ready;
             if (!arc.enabled) return;

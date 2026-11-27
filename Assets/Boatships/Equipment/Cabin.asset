@@ -15,8 +15,8 @@ MonoBehaviour:
   itemId: deck_cabin
   displayName: Cabin
   kind: 3
-  placement: 0
-  hardpointType: 0
+  placement: 1
+  hardpointType: 5
   widthCells: 3
   lengthCells: 3
   mass: 120

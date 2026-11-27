@@ -29,6 +29,8 @@ namespace Boatships
         /// <summary>While the world map is open the 3D encounter simulation is paused.</summary>
         public bool Suspended { get; set; }
         public bool IsReady => ready && world != null && economy.ActiveSeed == world.Seed && seed == world.Seed;
+        /// <summary>Raised once an enemy vessel is taken intact (her whole crew killed). The ship awaits the player's orders.</summary>
+        public event System.Action<EncounterRecord> PrizeTaken;
 
         public void Configure(ArchipelagoWorld map, PortEconomy account, ShipCombatTarget controlled,
             EnemyShipAI source, OceanWaves waves)
@@ -40,7 +42,108 @@ namespace Boatships
             for (int i = 0; i < 8; i++) yield return null;
             docking = FindAnyObjectByType<PortDocking>();
             if (world == null || economy == null || player == null || template == null) yield break;
+            BoatshipsAllegiance.SideOf = SideOf;
             ready = true;
+        }
+
+        // ───────────────────────────── Sides and the company in battle ─────────────────────────────
+
+        private readonly Dictionary<ShipCombatTarget, int> sides = new Dictionary<ShipCombatTarget, int>();
+        private readonly List<ShipCombatTarget> hostiles = new List<ShipCombatTarget>();
+        private readonly List<ShipCombatTarget> fightingCompany = new List<ShipCombatTarget>();
+        private readonly HashSet<ShipCombatTarget> commissioned = new HashSet<ShipCombatTarget>();
+        private const float CompanyEngageRange = 55f;
+        private const float BattleRadius = 90f;
+
+        /// <summary>Company ships may join a fight (the captain's own battles). The voyage layer turns this off on the
+        /// world map and when the player is a sailor aboard someone else's ship.</summary>
+        public bool CompanyMayEngage { get; set; } = true;
+        /// <summary>Raised when a ship of the company (or a prize) is lost, with a message for the player.</summary>
+        public event System.Action<string> CompanyShipLost;
+        /// <summary>Company ships fighting right now.</summary>
+        public int CompanyEngaged => fightingCompany.Count;
+
+        public CompanyOrders Orders => economy != null ? economy.Campaign.companyOrders : CompanyOrders.Engage;
+
+        public bool SetOrders(CompanyOrders orders)
+        {
+            if (economy == null || !economy.TryCampaignChange(progress => progress.companyOrders = orders)) return false;
+            Status = "Company orders: " + DescribeOrders(orders);
+            return true;
+        }
+
+        public static string DescribeOrders(CompanyOrders orders) =>
+            orders == CompanyOrders.Cripple ? "cripple — cease fire on enemies below 40% hull so they can be boarded" :
+            orders == CompanyOrders.HoldBack ? "hold back — keep station on the flagship" : "engage at will — fight to sink";
+
+        private int SideOf(ShipCombatTarget ship)
+        {
+            if (ship == null) return BoatshipsAllegiance.None;
+            if (ship == player) return BoatshipsAllegiance.Player;
+            return sides.TryGetValue(ship, out int side) ? side : BoatshipsAllegiance.None;
+        }
+
+        private static float HullFraction(ShipCombatTarget ship) =>
+            ship != null && ship.TotalVoxels > 0 ? (float)ship.RemainingVoxels / ship.TotalVoxels : 0f;
+
+        private static bool Afloat(ShipCombatTarget ship)
+        {
+            if (ship == null || !ship.gameObject.activeInHierarchy || ship.RemainingVoxels <= 0) return false;
+            ShipFlooding flood = ship.GetComponent<ShipFlooding>();
+            return flood == null || !flood.IsSinking;
+        }
+
+        /// <summary>A company ship with a captain goes after the nearest enemy still fighting, within reach of the battle.
+        /// Ships being boarded (AI off) are left alone, and under Cripple orders so are badly holed ones.</summary>
+        private bool TryEngage(EncounterRecord record, ShipCombatTarget actor)
+        {
+            if (!CompanyMayEngage || !record.InCompany || Orders == CompanyOrders.HoldBack || !Afloat(actor)) return false;
+            EnemyShipAI ai = actor.GetComponent<EnemyShipAI>();
+            if (ai == null) return false;
+            ShipCombatTarget best = null;
+            float bestDistance = CompanyEngageRange;
+            foreach (ShipCombatTarget enemy in hostiles)
+            {
+                EnemyShipAI enemyAI = enemy.GetComponent<EnemyShipAI>();
+                if (enemyAI == null || !enemyAI.enabled) continue;
+                if (Orders == CompanyOrders.Cripple && HullFraction(enemy) < 0.4f) continue;
+                if (Vector3.Distance(enemy.transform.position, player.transform.position) > BattleRadius) continue;
+                float distance = Vector3.Distance(enemy.transform.position, actor.transform.position);
+                if (distance >= bestDistance) continue;
+                bestDistance = distance; best = enemy;
+            }
+            if (best == null) return false;
+            if (commissioned.Add(actor)) ai.ConfigureCompany(record.kind, record.tier, record.captainSkill);
+            ai.SetTarget(best);
+            ai.enabled = true;
+            fightingCompany.Add(actor);
+            return true;
+        }
+
+        private static void StandDown(ShipCombatTarget actor)
+        {
+            EnemyShipAI ai = actor.GetComponent<EnemyShipAI>();
+            if (ai != null && ai.enabled) ai.enabled = false;
+        }
+
+        /// <summary>Enemy captains choose between the flagship and the company ships fighting them, favouring the flagship.</summary>
+        private void AssignHostileTargets()
+        {
+            if (!CompanyMayEngage) return;
+            foreach (ShipCombatTarget enemy in hostiles)
+            {
+                EnemyShipAI ai = enemy.GetComponent<EnemyShipAI>();
+                if (ai == null || !ai.enabled) continue;
+                ShipCombatTarget best = player;
+                float bestScore = Vector3.Distance(enemy.transform.position, player.transform.position) * 0.75f;
+                foreach (ShipCombatTarget ally in fightingCompany)
+                {
+                    float score = Vector3.Distance(enemy.transform.position, ally.transform.position);
+                    if (score >= bestScore) continue;
+                    bestScore = score; best = ally;
+                }
+                if (ai.Target != best) ai.SetTarget(best);
+            }
         }
 
         private void Update()
@@ -57,6 +160,14 @@ namespace Boatships
             if (Suspended) return;
             bool unresolved = false;
             int follower = 0;
+            // Sides first, so shots and gun crews know friend from foe.
+            sides.Clear(); hostiles.Clear(); fightingCompany.Clear();
+            foreach (EncounterRecord record in economy.Campaign.encounters)
+            {
+                if (record.defeated || !actors.TryGetValue(record.id, out ShipCombatTarget actor) || actor == null) continue;
+                sides[actor] = record.captured ? BoatshipsAllegiance.Player : BoatshipsAllegiance.Hostile;
+                if (!record.captured && Afloat(actor)) hostiles.Add(actor);
+            }
             foreach (EncounterRecord record in economy.Campaign.encounters)
             {
                 if (!actors.TryGetValue(record.id, out ShipCombatTarget actor) || actor == null) continue;
@@ -65,10 +176,20 @@ namespace Boatships
                     ShipFlooding capturedFlood = actor.GetComponent<ShipFlooding>();
                     if (actor.RemainingVoxels <= 0 || (capturedFlood != null && capturedFlood.IsSinking))
                     {
+                        string captain = record.captainName;
+                        string vessel = record.DisplayName;
                         if (economy.LoseCapturedVessel(record.id, actor.transform.position))
-                        { actors.Remove(record.id); Destroy(actor.gameObject); }
+                        {
+                            string lost = !string.IsNullOrEmpty(captain) ? "Captain " + captain + " went down with " + vessel + "." :
+                                "We lost " + vessel + "; her prize crew took to the boats.";
+                            actors.Remove(record.id); commissioned.Remove(actor); Destroy(actor.gameObject);
+                            Status = lost;
+                            CompanyShipLost?.Invoke(lost);
+                        }
                         continue;
                     }
+                    if (TryEngage(record, actor)) continue;
+                    StandDown(actor);
                     follower++;
                     Vector3 target = player.transform.TransformPoint(new Vector3(follower % 2 == 0 ? -7f : 7f,
                         0f, -7f * ((follower + 1) / 2)));
@@ -83,6 +204,8 @@ namespace Boatships
                 ShipFlooding flood = actor.GetComponent<ShipFlooding>();
                 if (actor.RemainingVoxels <= 0 || (flood != null && flood.IsSinking))
                 {
+                    // Whoever was still aboard goes into the sea with her; some are fished out alive.
+                    if (record.crew > 0) { record.Incapacitate(record.crew, Incapacitation.Sinking); record.crew = 0; }
                     if (economy.ResolveEncounter(record.id, false, actor.transform.position))
                     {
                         actors.Remove(record.id);
@@ -93,6 +216,7 @@ namespace Boatships
                 else unresolved = true;
             }
             economy.PruneDefeatedEncounters();
+            AssignHostileTargets();
             if (unresolved) nextWave = Time.time + 60f;
             else if (AutoWaves && Time.time >= nextWave && !docking.IsDocked) SpawnWave();
             SynchronizeCargo();
@@ -136,6 +260,7 @@ namespace Boatships
                 records.Add(new EncounterRecord { id = "campaign_" + serial + "_" + i,
                     kind = (EncounterKind)i, tier = tier, position = position,
                     defenderHealth = 45f + tier * 20f });
+                records[records.Count - 1].Muster(random);
             }
             if (!economy.TryCampaignChange(progress =>
                 { progress.encounterSerial++; progress.encounters.AddRange(records); })) return;
@@ -146,9 +271,10 @@ namespace Boatships
 
         private void Spawn(EncounterRecord record)
         {
+            record.Muster(new System.Random(record.id.GetHashCode()));
             GameObject clone = Instantiate(template.gameObject, record.position,
                 Quaternion.Euler(0f, record.yaw, 0f));
-            clone.name = record.kind + " " + record.id;
+            clone.name = record.kind + " " + record.shipName + " " + record.id;
             clone.SetActive(true);
             ShipCombatTarget target = clone.GetComponent<ShipCombatTarget>();
             target.Hull.EnableStructuralIntegrity();
@@ -164,7 +290,59 @@ namespace Boatships
             ArchipelagoNavigationLimiter limiter = clone.GetComponent<ArchipelagoNavigationLimiter>();
             if (limiter == null) limiter = clone.AddComponent<ArchipelagoNavigationLimiter>();
             limiter.Configure(world);
+            string id = record.id;
+            target.HullImpactReceived += (point, damage) => OnEnemyHit(id, damage);
             actors.Add(record.id, target);
+            sides[target] = record.captured ? BoatshipsAllegiance.Player : BoatshipsAllegiance.Hostile;
+        }
+
+        /// <summary>Round shot through the bulwarks kills men on deck. Gunfire alone never clears a ship:
+        /// the last of her crew shelter below and must be cut down by a boarding party.</summary>
+        private void OnEnemyHit(string id, float damage)
+        {
+            if (!ready || economy == null) return;
+            EncounterRecord record = economy.Campaign.encounters.Find(item => item.id == id);
+            if (record == null || record.defeated || record.captured || record.crew <= 1) return;
+            float chance = Mathf.Clamp(0.3f + damage / 150f, 0.3f, 0.75f);
+            if (Random.value >= chance) return;
+            record.crew = Mathf.Max(1, record.crew - 1);
+            record.Incapacitate(1, Incapacitation.Cannon);
+        }
+
+        /// <summary>Puts defenders out of the fight (boarders' kills). How they fell decides who survives as a prisoner.</summary>
+        public void KillCrew(EncounterRecord record, int count = 1, Incapacitation how = Incapacitation.Blade)
+        {
+            if (record == null || record.defeated || record.captured || count <= 0) return;
+            count = Mathf.Min(count, Mathf.Max(0, record.crew));
+            record.crew -= count;
+            record.Incapacitate(count, how);
+        }
+
+        /// <summary>Enemy ships still afloat and fighting, with their records.</summary>
+        public void GetHostiles(List<EncounterRecord> records, List<ShipCombatTarget> ships)
+        {
+            records.Clear(); ships.Clear();
+            if (!IsReady) return;
+            foreach (EncounterRecord record in economy.Campaign.encounters)
+            {
+                if (record.defeated || record.captured || !actors.TryGetValue(record.id, out ShipCombatTarget actor) ||
+                    actor == null || !actor.gameObject.activeInHierarchy || actor.RemainingVoxels <= 0) continue;
+                records.Add(record); ships.Add(actor);
+            }
+        }
+
+        /// <summary>Whether this enemy can be boarded now (distance aside), and if not, why.
+        /// A captain leading the boarding in person may try it at any time; Fighters alone need her weakened first.</summary>
+        public static bool CanBoard(ShipCombatTarget ship, EncounterRecord record, out string reason, bool captainLeads = false)
+        {
+            reason = null;
+            if (ship == null || record == null) { reason = "No enemy ship close enough to board."; return false; }
+            float hull = (float)ship.RemainingVoxels / Mathf.Max(1, ship.TotalVoxels);
+            ShipFlooding flooding = ship.GetComponent<ShipFlooding>();
+            if (hull <= 0.1f || (flooding != null && flooding.IsSinking)) { reason = "She is going down — too late to take her."; return false; }
+            bool weakened = hull <= 0.65f || (record.crewMax > 0 && record.crew * 2 <= record.crewMax);
+            if (!weakened && !captainLeads) { reason = "Batter her hull below 65% or cut her crew to half before boarding."; return false; }
+            return true;
         }
 
         /// <summary>Spawns a specific battle around the flagship. Returns the new encounter ids.</summary>
@@ -187,6 +365,7 @@ namespace Boatships
                     kind = kinds[i], tier = tier, position = position,
                     yaw = Mathf.Atan2(toPlayer.x, toPlayer.z) * Mathf.Rad2Deg,
                     defenderHealth = 45f + tier * 20f });
+                records[records.Count - 1].Muster(random);
             }
             if (!economy.TryCampaignChange(progress =>
                 { progress.encounterSerial++; progress.encounters.AddRange(records); })) return ids;
@@ -287,10 +466,13 @@ namespace Boatships
         public bool Capture(EncounterRecord record, ShipCombatTarget target)
         {
             if (!economy.ResolveEncounter(record.id, true, target.transform.position)) return false;
+            record.crew = 0;
+            record.hullFraction = (float)target.RemainingVoxels / Mathf.Max(1, target.TotalVoxels);
             record.damage = target.Hull.CaptureVoxelDamage();
             ShipFlooding flood = target.GetComponent<ShipFlooding>();
             record.flooding = flood != null ? flood.CaptureFlooding() : null;
             target.GetComponent<EnemyShipAI>().enabled = false;
+            sides[target] = BoatshipsAllegiance.Player;
             int visible = 0;
             foreach (EncounterRecord vessel in economy.Campaign.encounters)
                 if (vessel.captured && actors.TryGetValue(vessel.id, out ShipCombatTarget actor) &&
@@ -298,6 +480,21 @@ namespace Boatships
             if (visible > 2) { actors.Remove(record.id); Destroy(target.gameObject); }
             Status = visible > 2 ? "Vessel captured and added to the reserve fleet." :
                 "Vessel captured. It joins your fleet and follows your flagship.";
+            economy.SaveNow();
+            PrizeTaken?.Invoke(record);
+            return true;
+        }
+
+        /// <summary>Sells a captured ship and removes her from the sea.</summary>
+        public bool SellCaptured(string id, out int price)
+        {
+            if (!economy.SellCapturedShip(id, out price)) return false;
+            if (actors.TryGetValue(id, out ShipCombatTarget actor))
+            {
+                if (actor != null) Destroy(actor.gameObject);
+                actors.Remove(id);
+            }
+            Status = economy.LastMessage;
             return true;
         }
 
@@ -353,9 +550,11 @@ namespace Boatships
             foreach (ShipCombatTarget actor in actors.Values) if (actor != null) Destroy(actor.gameObject);
             foreach (GameObject marker in cargo.Values) if (marker != null) Destroy(marker);
             actors.Clear(); cargo.Clear();
+            sides.Clear(); commissioned.Clear(); hostiles.Clear(); fightingCompany.Clear();
         }
         private void OnDestroy()
         {
+            if (BoatshipsAllegiance.SideOf == (System.Func<ShipCombatTarget, int>)SideOf) BoatshipsAllegiance.SideOf = null;
             if (economy != null) economy.LootCollected -= OnLootCollected;
             ClearActors();
             if (cargoMaterial != null) Destroy(cargoMaterial);

@@ -155,6 +155,8 @@ namespace Boatships
                 crew.AddSailor(record.kind + " hand", duty);
             }
             crew.Opponents.Add(own);
+            // Every enemy sailor cut down or shot is a real casualty; how he fell decides whether he lives to be taken prisoner.
+            crew.SailorDied += sailor => director.KillCrew(Record(id), 1, sailor.FelledBy);
             own.Opponents.Add(crew);
             if (enemy.AI != null)
             {

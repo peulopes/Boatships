@@ -15,8 +15,8 @@ MonoBehaviour:
   itemId: deck_cannon
   displayName: Deck Cannon
   kind: 0
-  placement: 0
-  hardpointType: 0
+  placement: 1
+  hardpointType: 3
   widthCells: 2
   lengthCells: 2
   mass: 60

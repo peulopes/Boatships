@@ -99,7 +99,7 @@ namespace Boatships
                 for (int i = 0; i < count; ++i)
                 {
                     ShipCombatTarget candidate = impacts[i].collider.GetComponentInParent<ShipCombatTarget>();
-                    if (candidate != null && candidate == owner) continue;
+                    if (candidate != null && (candidate == owner || BoatshipsAllegiance.Allied(candidate, owner))) continue;
                     if (impacts[i].distance >= closest) continue;
                     closest = impacts[i].distance;
                     blocked = true;

@@ -54,6 +54,8 @@ namespace Boatships
             public List<LootCache> wrecks = new List<LootCache>();
             public CampaignProgress campaign = new CampaignProgress();
             public List<MissionContract> missions = new List<MissionContract>();
+            public List<Prisoner> prisoners = new List<Prisoner>();
+            public int prisonerSerial;
         }
 
         public struct CrewOffer
@@ -123,6 +125,7 @@ namespace Boatships
                     state.campaign.encounters.RemoveAll(item => item == null || item.defeated);
                     if (state.campaign.discovered == null) state.campaign.discovered = new List<Vector2Int>();
                     if (state.missions == null) state.missions = new List<MissionContract>();
+                    if (state.prisoners == null) state.prisoners = new List<Prisoner>();
                 }
                 catch (Exception ex)
                 {
@@ -626,15 +629,227 @@ namespace Boatships
             return false;
         }
 
+        // Sunk ships stay listed until their survivors are taken prisoner or left behind.
+        private static bool Prunable(EncounterRecord item) => item.defeated && (item.prisonersResolved || item.Survivors == 0);
+
         public bool PruneDefeatedEncounters()
         {
             if (saveLocked || state == null || state.campaign == null || state.campaign.encounters == null) return false;
-            if (!state.campaign.encounters.Exists(item => item.defeated)) return false;
+            if (!state.campaign.encounters.Exists(Prunable)) return false;
             string before = JsonUtility.ToJson(state);
-            state.campaign.encounters.RemoveAll(item => item.defeated);
+            state.campaign.encounters.RemoveAll(Prunable);
             if (Save()) return true;
             state = JsonUtility.FromJson<SaveState>(before);
             return false;
+        }
+
+        // ───────────────────────────── Prisoners ─────────────────────────────
+
+        public IReadOnlyList<Prisoner> Prisoners => state.prisoners;
+
+        /// <summary>Room for prisoners across the flagship and company, as last computed by the voyage layer (for display).</summary>
+        public int PrisonerCapacity { get; set; }
+
+        /// <summary>Takes up to count survivors of an encounter aboard as prisoners, the fittest first.
+        /// Whatever is not taken is left behind for good. Returns how many were taken.</summary>
+        public int TakePrisoners(string encounterId, int count)
+        {
+            EncounterRecord record = state.campaign.encounters.Find(item => item.id == encounterId);
+            if (saveLocked || !hasActiveSeed || record == null || record.prisonersResolved) return 0;
+            string before = JsonUtility.ToJson(state);
+            var random = new System.Random(unchecked(activeSeed * 31 + state.prisonerSerial * 7919 + encounterId.GetHashCode()));
+            int taken = 0;
+            while (taken < count && record.TakeSurvivor(out Incapacitation wound))
+            {
+                state.prisoners.Add(new Prisoner
+                {
+                    id = activeSeed + ":prisoner:" + state.prisonerSerial++,
+                    name = FirstNames[random.Next(FirstNames.Length)] + " " + LastNames[random.Next(LastNames.Length)],
+                    tier = record.tier,
+                    ship = record.shipName,
+                    wound = wound,
+                    skill = random.Next(15, 51),
+                    // Pressed men from a merchant brig sign on more readily than navy hands.
+                    willing = random.NextDouble() < (record.kind == EncounterKind.Patrol ? 0.25 : 0.45)
+                });
+                taken++;
+            }
+            LeaveSurvivors(record);
+            if (Save())
+            {
+                LastMessage = taken > 0 ? taken + " prisoner" + (taken == 1 ? "" : "s") + " taken from " + record.DisplayName + "." :
+                    "No prisoners taken from " + record.DisplayName + ".";
+                return taken;
+            }
+            state = JsonUtility.FromJson<SaveState>(before);
+            return 0;
+        }
+
+        private static void LeaveSurvivors(EncounterRecord record)
+        {
+            record.prisonersResolved = true;
+            record.survivedBlade = record.survivedCannon = record.survivedFirearm = record.survivedSinking = 0;
+        }
+
+        /// <summary>Leaves an encounter's survivors behind (adrift, or to the victors' mercy elsewhere).</summary>
+        public void LeaveSurvivors(string encounterId)
+        {
+            EncounterRecord record = state.campaign.encounters.Find(item => item.id == encounterId);
+            if (record == null || record.prisonersResolved) return;
+            LeaveSurvivors(record);
+            Save();
+        }
+
+        /// <summary>Hands every prisoner to the harbour authorities for the bounty on them.</summary>
+        public bool HandOverPrisoners(out int count, out int bounty)
+        {
+            count = state.prisoners.Count; bounty = 0;
+            if (saveLocked || !hasActiveSeed || count == 0) return false;
+            string before = JsonUtility.ToJson(state);
+            foreach (Prisoner prisoner in state.prisoners) bounty += prisoner.Bounty;
+            state.prisoners.Clear();
+            state.gold += bounty;
+            state.campaign.reputation += Mathf.Max(1, count / 3);
+            if (Save()) { LastMessage = "The harbour guard took " + count + " prisoners and paid a bounty of " + bounty + " gold."; return true; }
+            state = JsonUtility.FromJson<SaveState>(before);
+            count = 0; bounty = 0;
+            return false;
+        }
+
+        /// <summary>A willing prisoner signs on as a member of the crew.</summary>
+        public bool RecruitPrisoner(string prisonerId)
+        {
+            Prisoner prisoner = state.prisoners.Find(item => item.id == prisonerId);
+            if (saveLocked || !hasActiveSeed || prisoner == null) return false;
+            if (!prisoner.willing) { LastMessage = prisoner.name + " spits on the deck and refuses to serve."; return false; }
+            if (state.crew.Count >= 24) { LastMessage = "Crew roster is full (24)."; return false; }
+            string before = JsonUtility.ToJson(state);
+            state.prisoners.Remove(prisoner);
+            string key = "prisoner:" + prisoner.id;
+            var random = new System.Random(prisoner.id.GetHashCode());
+            state.crew.Add(new CrewMember
+            {
+                offerKey = key,
+                displayName = prisoner.name,
+                role = Roles[random.Next(Roles.Length)],
+                skill = prisoner.skill,
+                wage = 2 + prisoner.skill / 20
+            });
+            state.recruitedOfferKeys.Add(key);
+            if (Save()) { LastMessage = prisoner.name + " swore to serve and joined your crew."; return true; }
+            state = JsonUtility.FromJson<SaveState>(before);
+            return false;
+        }
+
+        /// <summary>Releases prisoners: all of them, or only enough to bring the number down to keep.</summary>
+        public int ReleasePrisoners(int keep = 0)
+        {
+            int released = Mathf.Max(0, state.prisoners.Count - Mathf.Max(0, keep));
+            if (released == 0 || saveLocked || !hasActiveSeed) return 0;
+            // The most recently taken go first.
+            state.prisoners.RemoveRange(state.prisoners.Count - released, released);
+            Save();
+            return released;
+        }
+
+        /// <summary>Ships taken in battle: the company (with a captain) and prizes still awaiting orders.</summary>
+        public List<EncounterRecord> CapturedShips()
+        {
+            var ships = new List<EncounterRecord>();
+            foreach (EncounterRecord record in state.campaign.encounters)
+                if (record.captured && !record.sold) ships.Add(record);
+            return ships;
+        }
+
+        public int CompanySize
+        {
+            get
+            {
+                int count = 0;
+                foreach (EncounterRecord record in state.campaign.encounters) if (record.InCompany) count++;
+                return count;
+            }
+        }
+
+        /// <summary>Crew members who can be given command of a ship (healthy enough to be on the roster with a stable key).</summary>
+        public bool CanCaptain(CrewMember member) => member != null && !string.IsNullOrEmpty(member.offerKey);
+
+        /// <summary>Promotes a sailor from the flagship's crew to captain of a captured ship.
+        /// A captain being replaced returns to the flagship's crew if there is room.</summary>
+        public bool AppointCaptain(string encounterId, string crewKey)
+        {
+            EncounterRecord record = state.campaign.encounters.Find(item => item.id == encounterId);
+            CrewMember member = state.crew.Find(item => item.offerKey == crewKey);
+            if (saveLocked || !hasActiveSeed || record == null || !record.captured || record.sold || !CanCaptain(member))
+            {
+                LastMessage = "That sailor cannot take command of this ship.";
+                return false;
+            }
+            string before = JsonUtility.ToJson(state);
+            string replaced = ReturnCaptainToCrew(record);
+            state.crew.Remove(member);
+            record.captainKey = member.offerKey;
+            record.captainName = member.displayName;
+            record.captainRole = member.role;
+            record.captainSkill = member.skill;
+            if (Save())
+            {
+                LastMessage = "Captain " + member.displayName + " takes command of " + record.DisplayName + "." +
+                    (replaced != null ? " " + replaced : "");
+                return true;
+            }
+            state = JsonUtility.FromJson<SaveState>(before);
+            LastMessage = "Could not save the appointment.";
+            return false;
+        }
+
+        /// <summary>Sells a captured ship (at sea to a prize agent, or to a shipwright). Her captain rejoins the crew.</summary>
+        public bool SellCapturedShip(string encounterId, out int price)
+        {
+            price = 0;
+            EncounterRecord record = state.campaign.encounters.Find(item => item.id == encounterId);
+            if (saveLocked || !hasActiveSeed || record == null || !record.captured || record.sold) return false;
+            string before = JsonUtility.ToJson(state);
+            price = record.PrizeValue;
+            string returned = ReturnCaptainToCrew(record);
+            record.captured = false;
+            record.defeated = true;
+            record.sold = true;
+            record.damage.Clear();
+            record.flooding = null;
+            state.gold += price;
+            if (Save())
+            {
+                LastMessage = "Sold " + record.DisplayName + " for " + price + " gold." + (returned != null ? " " + returned : "");
+                return true;
+            }
+            state = JsonUtility.FromJson<SaveState>(before);
+            price = 0;
+            LastMessage = "Could not save the sale.";
+            return false;
+        }
+
+        /// <summary>Puts a ship's captain back on the flagship's roster. Returns a message, or null if she had no captain.</summary>
+        private string ReturnCaptainToCrew(EncounterRecord record)
+        {
+            if (string.IsNullOrEmpty(record.captainKey)) return null;
+            string name = record.captainName;
+            string message;
+            if (state.crew.Count < 24 && !state.crew.Exists(item => item.offerKey == record.captainKey))
+            {
+                state.crew.Add(new CrewMember
+                {
+                    offerKey = record.captainKey,
+                    displayName = record.captainName,
+                    role = string.IsNullOrEmpty(record.captainRole) ? "Sailor" : record.captainRole,
+                    skill = record.captainSkill,
+                    wage = 3 + record.captainSkill / 15
+                });
+                message = name + " rejoins your crew.";
+            }
+            else message = name + " takes their share and goes ashore (your crew is full).";
+            record.captainKey = null; record.captainName = null; record.captainRole = null; record.captainSkill = 0;
+            return message;
         }
 
         public bool LoseCapturedVessel(string encounterId, Vector3 position)
@@ -642,6 +857,9 @@ namespace Boatships
             EncounterRecord record = state.campaign.encounters.Find(item => item.id == encounterId);
             if (record == null || !record.captured || saveLocked) return false;
             string before = JsonUtility.ToJson(state);
+            if (!string.IsNullOrEmpty(record.captainName))
+                LastMessage = "Captain " + record.captainName + " went down with " + record.DisplayName + ".";
+            record.captainKey = null; record.captainName = null;
             record.captured = false; record.defeated = true;
             record.damage.Clear();
             record.flooding = null;

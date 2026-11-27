@@ -42,6 +42,8 @@ namespace Boatships
         public Vector3 BailLocal { get; private set; }
         public IReadOnlyList<BoatshipsDeckCannon> Cannons => cannons;
         public IReadOnlyList<BoatshipsDeckFighter> Sailors => sailors;
+        /// <summary>Raised when one of this crew falls (before they are replaced from below).</summary>
+        public event Action<BoatshipsDeckFighter> SailorDied;
         public float Water => Flooding != null ? Flooding.FloodFraction : 0f;
         public int PlanksLeft => planksLeft != null ? planksLeft() : 0;
         public bool Afloat => Ship != null && Ship.RemainingVoxels > 0 && (Flooding == null || !Flooding.IsSinking) && Deck != null && Deck.Valid;
@@ -84,7 +86,7 @@ namespace Boatships
             crew.Team = team; crew.Ship = ship; crew.Deck = deck; crew.ocean = ocean;
             crew.takePlank = takePlank; crew.planksLeft = planksLeft;
             crew.sailorHealth = health; crew.sailorDamage = meleeDamage;
-            crew.random = new System.Random(Environment.TickCount ^ ship.GetInstanceID());
+            crew.random = new System.Random(Environment.TickCount ^ ship.GetEntityId().GetHashCode());
             crew.Flooding = ship.GetComponent<ShipFlooding>();
             if (crew.Flooding != null)
             {
@@ -425,7 +427,7 @@ namespace Boatships
         }
 
         private static bool Mounted(BoatshipsDeckCannon cannon) =>
-            BoatshipsDeckFighter.Player != null && BoatshipsDeckFighter.Player.Mounted == cannon;
+            BoatshipsDeckFighter.Player != null && ReferenceEquals(BoatshipsDeckFighter.Player.Mounted, cannon);
 
         /// <summary>Whether the enemy lies within (or close to) a gun's training arc.</summary>
         private bool Facing(BoatshipsDeckCannon cannon, BoatshipsShipCrew enemy)
@@ -447,6 +449,7 @@ namespace Boatships
 
         private void OnSailorDied(BoatshipsDeckFighter sailor)
         {
+            SailorDied?.Invoke(sailor);
             if (tasks.TryGetValue(sailor, out Task task) && task.Cannon != null && task.Cannon.Operator == sailor) task.Cannon.Operator = null;
             tasks.Remove(sailor);
             sailors.Remove(sailor);

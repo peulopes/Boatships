@@ -22,7 +22,7 @@ namespace Boatships
         private sealed class KeyComparer : IEqualityComparer<BatchKey>
         {
             public bool Equals(BatchKey a, BatchKey b) => a.Material == b.Material && a.Shadows == b.Shadows;
-            public int GetHashCode(BatchKey k) => (k.Material != null ? k.Material.GetInstanceID() : 0) * 2 + (k.Shadows ? 1 : 0);
+            public int GetHashCode(BatchKey k) => (k.Material != null ? k.Material.GetEntityId().GetHashCode() : 0) * 2 + (k.Shadows ? 1 : 0);
         }
 
         private static readonly List<MeshRenderer> renderers = new List<MeshRenderer>();
