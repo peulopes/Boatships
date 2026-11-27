@@ -197,6 +197,10 @@ namespace Boatships
         public void BindFirstPerson(BoatshipsFirstPerson firstPerson, BoatshipsTown portTown, BoatshipsCrewBattle crewFight)
         { fps = firstPerson; town = portTown; crewBattle = crewFight; }
 
+        public void BindInventory(BoatshipsInventory items) => inventory = items;
+        private BoatshipsInventory inventory;
+        public BoatshipsInventory Inventory => inventory;
+
         /// <summary>Sea battles of the player's own ship are fought in first person on deck.</summary>
         public void BindShipBattle(BoatshipsShipBattle battle) => shipBattle = battle;
         private BoatshipsShipBattle shipBattle;
@@ -535,7 +539,8 @@ namespace Boatships
         {
             get
             {
-                float speed = BaseSpeed * character.MapSpeedMultiplier * (1f + economy.Campaign.sailLevel * 0.1f);
+                float speed = BaseSpeed * character.MapSpeedMultiplier * (1f + economy.Campaign.sailLevel * 0.1f) *
+                    (inventory != null && inventory.Ready ? inventory.SpeedFactor : 1f);
                 return state.starving ? speed * 0.6f : speed;
             }
         }
@@ -876,7 +881,11 @@ namespace Boatships
                 options.Add(new MapMenuOption("Shipwright: buy a used sloop (" + price + " gold)",
                     () => BuyShip(site), economy.Gold >= price));
             }
+            if (inventory != null && inventory.Ready)
+                options.Add(new MapMenuOption("Market and armourer (trade goods, weapons, armour)", () => StoreMenu(site)));
             options.Add(new MapMenuOption("Character", () => CharacterSheet(() => TownMenu(site, null))));
+            if (inventory != null && inventory.Ready)
+                options.Add(new MapMenuOption("Inventory and ship's hold", () => inventory.InventoryMenu(() => TownMenu(site, null))));
             options.Add(new MapMenuOption("Leave town", null));
             view.ShowMenu(BoatshipsNames.Island(site), body, options);
         }
@@ -1368,6 +1377,11 @@ namespace Boatships
                 int price = economy.BuyPrice(i);
                 options.Add(new MapMenuOption("Buy " + goods[i] + " — " + price + " gold",
                     () => { economy.Buy(slot); StoreMenu(site); }, economy.Gold >= price));
+            }
+            if (inventory != null && inventory.Ready)
+            {
+                options.Add(new MapMenuOption("Market: trade goods", () => inventory.MarketMenu(site, () => StoreMenu(site))));
+                options.Add(new MapMenuOption("Armourer: weapons, armour, bandages", () => inventory.ArmourerMenu(site, () => StoreMenu(site))));
             }
             options.Add(new MapMenuOption("Leave the store", null));
             view.ShowMenu("General Store", economy.LastMessage + "\n\nGold " + economy.Gold + "   Wood " + economy.Wood +

@@ -92,6 +92,24 @@ namespace Boatships
         public static bool OnFoot { get; private set; }
         public bool Airborne => mode == Mode.Deck ? hop > 0f : mode == Mode.Ground && controller != null && !controller.isGrounded;
         public float Health { get; private set; } = 100f;
+
+        // Equipment (set by the player's inventory): health from armour, weapon damage/reach/speed, blocking.
+        public float MaxHealth { get; set; } = 100f;
+        public float DamageMultiplier { get; set; } = 1f;
+        public float ReachMultiplier { get; set; } = 1f;
+        public float SwingSpeedMultiplier { get; set; } = 1f;
+        public float BlockBonus { get; set; }
+        /// <summary>[H]: asks the inventory for a bandage or grog; returns the health it restores (0: none left).</summary>
+        public Func<float> HealRequested { get; set; }
+
+        /// <summary>Applies the equipped weapon's look: longer reach, longer blade.</summary>
+        public void SetWeaponLook(float reach, Color blade)
+        {
+            if (viewSword == null) return;
+            viewSword.localScale = new Vector3(1f, 1f, Mathf.Clamp(reach, 0.6f, 1.6f));
+            Renderer renderer = viewSword.GetComponentInChildren<Renderer>();
+            if (renderer != null) renderer.sharedMaterial = BoatshipsHumanoid.MaterialFor(blade);
+        }
         public bool Alive => Health > 0f;
         public bool Blocking { get; private set; }
         public int Kills { get; private set; }
@@ -241,7 +259,7 @@ namespace Boatships
             cam.enabled = true; listener.enabled = true;
             if (gameplayCanvas != null) gameplayCanvasWasEnabled = gameplayCanvas.enabled;
             if (docking != null) docking.KeyboardShortcuts = false;
-            Health = 100f; Kills = 0; Contributed = false; Blocking = false; flashAlpha = 0f;
+            Health = MaxHealth; Kills = 0; Contributed = false; Blocking = false; flashAlpha = 0f;
             interactables.Clear();
             hudCanvas.gameObject.SetActive(true);
             SetExit(null, null);
@@ -260,7 +278,8 @@ namespace Boatships
         public void TakeDamage(float amount, Vector3 from)
         {
             if (!Active || !Alive) return;
-            Health = Mathf.Max(0f, Health - (Blocking ? amount * 0.25f : amount));
+            float taken = Blocking ? amount * Mathf.Max(0.05f, 0.25f - BlockBonus) : amount * (1f - Mathf.Clamp(BlockBonus, 0f, 0.5f));
+            Health = Mathf.Max(0f, Health - taken);
             flashAlpha = Blocking ? 0.15f : 0.45f;
             if (!Alive) Downed?.Invoke();
         }
@@ -277,7 +296,7 @@ namespace Boatships
             if (knockedUntil > 0f && Time.time >= knockedUntil)
             {
                 knockedUntil = 0f;
-                Health = 100f;
+                Health = MaxHealth;
                 Action onRevive = revived;
                 revived = null;
                 onRevive?.Invoke();
@@ -332,6 +351,13 @@ namespace Boatships
                         focused.Use?.Invoke();
                         Contributed = true;
                     }
+                }
+                // [H]: bandages or grog from the bag.
+                if (keyboard != null && keyboard.hKey.wasPressedThisFrame && Health < MaxHealth && HealRequested != null)
+                {
+                    float heal = HealRequested();
+                    if (heal > 0f) { Health = Mathf.Min(MaxHealth, Health + heal); status = "You patch yourself up (+" + Mathf.RoundToInt(heal) + ")."; }
+                    else status = "No bandages or grog in your bag.";
                 }
                 // Cannons are loaded by hand, one ball at a time.
                 if (mounted != null && keyboard != null && keyboard.rKey.wasPressedThisFrame && mounted.StartLoading()) Contributed = true;
@@ -455,11 +481,11 @@ namespace Boatships
                 return;
             }
             if (mode != Mode.Deck || Blocking || atHelm || Time.time < nextAttack) return;
-            nextAttack = Time.time + 0.55f;
+            nextAttack = Time.time + 0.55f / Mathf.Max(0.3f, SwingSpeedMultiplier);
             swing = 1f;
             Vector3 forward = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
             BoatshipsDeckFighter best = null;
-            float bestDistance = Reach;
+            float bestDistance = Reach * ReachMultiplier;
             foreach (BoatshipsDeckFighter fighter in BoatshipsDeckFighter.All)
             {
                 if (fighter.Team != 1 || !fighter.Alive || fighter.Deck == null || fighter.Deck.Hull != deck.Hull) continue;
@@ -472,7 +498,7 @@ namespace Boatships
             }
             if (best == null) return;
             int fighting = character != null ? character.Skill(CharacterSkill.Fighting) : 0;
-            best.TakeHit(16f * (1f + fighting * 0.12f));
+            best.TakeHit(16f * DamageMultiplier * (1f + fighting * 0.12f));
             Contributed = true;
             if (!best.Alive) Kills++;
         }

@@ -291,11 +291,13 @@ namespace Boatships
             foreach (MapMenuOption option in options)
             {
                 MapMenuOption chosen = option;
+                // Long lists (markets, inventories) use compact rows so the card still fits the screen.
+                bool compact = options.Count > 7;
                 Button button = BoatshipsUI.Button(option.Label, menuOptions, () =>
                 {
                     menuRoot.SetActive(false);
                     chosen.Action?.Invoke();
-                }, 62f, 22);
+                }, compact ? 42f : 62f, compact ? 19 : 22);
                 button.interactable = option.Enabled;
             }
             menuRoot.SetActive(true);

@@ -36,6 +36,8 @@ namespace Boatships
         public float UpgradeSpeedMultiplier { get; set; } = 1f;
         public float HullSpeedMultiplier { get; set; } = 1f;
         public float HullDraft { get; set; }
+        /// <summary>An overloaded hold slows the ship (set by the inventory).</summary>
+        public float CargoSpeedMultiplier { get; set; } = 1f;
 
         /// <summary>First-person sailing: the helm and sails drive the ship instead of WASD.
         /// Throttle is the sail setting (-0.35 backing … 1 full sail) and persists when nobody is at the wheel.</summary>
@@ -77,7 +79,7 @@ namespace Boatships
                 ? input.y * forwardSpeed * Mathf.Clamp(CrewSpeedMultiplier, 0.5f, 1.5f)
                 : input.y * reverseSpeed * Mathf.Clamp(CrewSpeedMultiplier, 0.5f, 1.5f);
             float speedChange = Mathf.Abs(input.y) > 0.01f ? acceleration : deceleration;
-            targetSpeed *= UpgradeSpeedMultiplier * HullSpeedMultiplier;
+            targetSpeed *= UpgradeSpeedMultiplier * HullSpeedMultiplier * Mathf.Clamp(CargoSpeedMultiplier, 0.3f, 1f);
             currentSpeed = Mathf.MoveTowards(currentSpeed, targetSpeed, speedChange * Time.fixedDeltaTime);
 
             Quaternion yaw = body.rotation * Quaternion.Euler(

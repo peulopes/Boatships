@@ -54,6 +54,13 @@ namespace Boatships
         public bool HullEditing { get; set; }
         public string Status { get; private set; } = "Select equipment then click a deck cell.";
         public int InstalledCount => installed.Count;
+
+        public int CountInstalled(ShipEquipmentKind kind)
+        {
+            int count = 0;
+            foreach (Placement placement in installed) if (placement.definition != null && placement.definition.Kind == kind) count++;
+            return count;
+        }
         public ShipEquipmentDefinition Cannon => cannon;
         public ShipEquipmentDefinition Storage => storage;
         public ShipEquipmentDefinition Armor => armor;
