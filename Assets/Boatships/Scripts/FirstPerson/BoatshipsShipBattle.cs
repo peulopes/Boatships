@@ -76,6 +76,7 @@ namespace Boatships
             if (own == null) return false;
             flagship = ownShip; movement = shipMovement; weapons = shipWeapons;
             Active = true; Abandoned = false;
+            BoatshipsAudio.Play2D(Sfx.Bell);
             startedAt = Time.time; sinkingSince = -1f; captures = 0;
             sail = movement != null ? Mathf.Clamp01(movement.CurrentSpeed / 9f) : 0f;
             rudder = 0f;

@@ -147,6 +147,7 @@ namespace Boatships
             foreach (ShipFlooding.Breach breach in breaches) if (breach.Key == key && !breach.Patched) { open = true; break; }
             if (!open || !takePlank()) return false;
             if (!Flooding.PatchBreach(key)) return false;
+            BoatshipsAudio.Play(Sfx.Hammer, Ship.transform.position);
             Refresh();
             return true;
         }
@@ -157,7 +158,12 @@ namespace Boatships
             return false;
         }
 
-        public float Bail(float amount) => Flooding != null ? Flooding.Bail(amount) : 0f;
+        public float Bail(float amount)
+        {
+            float removed = Flooding != null ? Flooding.Bail(amount) : 0f;
+            if (removed > 0f) BoatshipsAudio.Play(Sfx.Bail, Ship.transform.position, 0.7f);
+            return removed;
+        }
 
         /// <summary>Nearest opponent still afloat, and the distance between ship centres.</summary>
         public BoatshipsShipCrew NearestOpponent(out float distance)

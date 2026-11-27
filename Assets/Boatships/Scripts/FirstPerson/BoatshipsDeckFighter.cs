@@ -198,8 +198,14 @@ namespace Boatships
                 {
                     nextAttack = Time.time + UnityEngine.Random.Range(1.0f, 1.6f);
                     swing = 1f;
+                    BoatshipsAudio.Play(Sfx.Swing, transform.position, 0.7f);
                     if (targetIsPlayer) Player.TakeDamage(damage, transform.position);
-                    else enemy.TakeHit(damage);
+                    else
+                    {
+                        enemy.TakeHit(damage);
+                        // Some strokes are parried, steel on steel; the rest land.
+                        BoatshipsAudio.Play(UnityEngine.Random.value < 0.35f ? Sfx.Clang : Sfx.SwordHit, enemy.transform.position, 0.8f);
+                    }
                 }
             }
             Separate(dt);

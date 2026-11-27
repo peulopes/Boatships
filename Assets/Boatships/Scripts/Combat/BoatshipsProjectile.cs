@@ -73,6 +73,7 @@ namespace Boatships
             gravity = Mathf.Max(0f, gravityAcceleration);
             remaining = lifetime;
             launched = true;
+            BoatshipsAudio.Play(Sfx.CannonFire, transform.position);
             if (owner != null) ShipFired?.Invoke(owner, transform.position);
         }
 
@@ -109,6 +110,7 @@ namespace Boatships
                 if (blocked)
                 {
                     if (owner != null) ShotImpacted?.Invoke(owner, point);
+                    BoatshipsAudio.Play(Sfx.HullHit, point, receiver != null ? 1f : 0.5f);
                     if (receiver != null) receiver.ReceiveImpact(point, damage, radius);
                     Release();
                     return;
@@ -118,6 +120,7 @@ namespace Boatships
             velocity = nextVelocity;
             if (ocean != null && destination.y < ocean.SampleHeight(destination.x, destination.z, Time.time))
             {
+                BoatshipsAudio.Play(Sfx.Splash, destination);
                 if (owner != null) ShotImpacted?.Invoke(owner, destination);
                 Release();
             }

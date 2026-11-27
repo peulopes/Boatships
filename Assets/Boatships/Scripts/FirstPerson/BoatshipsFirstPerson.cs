@@ -353,6 +353,7 @@ namespace Boatships
             float taken = Blocking ? amount * Mathf.Max(0.05f, 0.25f - BlockBonus) : amount * (1f - Mathf.Clamp(BlockBonus, 0f, 0.5f));
             Health = Mathf.Max(0f, Health - taken);
             flashAlpha = Blocking ? 0.15f : 0.45f;
+            BoatshipsAudio.Play2D(Blocking ? Sfx.Clang : Sfx.SwordHit, Blocking ? 1f : 0.8f);
             if (!Alive) Downed?.Invoke();
         }
 
@@ -581,6 +582,7 @@ namespace Boatships
             if (Blocking || Time.time < nextAttack) return;
             nextAttack = Time.time + 0.55f / Mathf.Max(0.3f, SwingSpeedMultiplier);
             swing = 1f;
+            BoatshipsAudio.Play2D(Sfx.Swing);
             Vector3 forward = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
             BoatshipsDeckFighter best = null;
             float bestDistance = Reach * ReachMultiplier;
@@ -595,6 +597,7 @@ namespace Boatships
                 bestDistance = distance; best = fighter;
             }
             if (best == null) return;
+            BoatshipsAudio.Play(Sfx.SwordHit, best.transform.position);
             int fighting = character != null ? character.Skill(CharacterSkill.Fighting) : 0;
             best.TakeHit(16f * DamageMultiplier * (1f + fighting * 0.12f));
             Contributed = true;
@@ -610,6 +613,7 @@ namespace Boatships
             nextAttack = Time.time + 0.3f;
             flashUntil = Time.time + 0.06f;
             recoil = 1f;
+            BoatshipsAudio.Play2D(Sfx.Pistol);
             int gunnery = character != null ? character.Skill(CharacterSkill.Gunnery) : 0;
             float spread = Mathf.Lerp(2.2f, 0.6f, Mathf.Clamp01(gunnery / 10f));
             Vector3 direction = Quaternion.Euler(UnityEngine.Random.Range(-spread, spread), UnityEngine.Random.Range(-spread, spread), 0f) *
@@ -894,6 +898,7 @@ namespace Boatships
         {
             if (Ready || Loading) return false;
             loadedAt = Time.time + loadSeconds;
+            BoatshipsAudio.Play(Sfx.CannonLoad, transform.position);
             return true;
         }
 
