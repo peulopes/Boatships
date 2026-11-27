@@ -154,6 +154,9 @@ namespace Boatships
         public bool KnockedOut => knockedUntil > 0f;
         public DeckSpace CurrentDeck => mode == Mode.Deck ? deck : null;
         public bool Crossing => Time.time - crossStarted < CrossSeconds;
+        public Vector3 FeetWorld => FeetPosition;
+        /// <summary>Shows the combat HUD (health, attack keys) on land too, e.g. while storming a town.</summary>
+        public bool CombatMode { get; set; }
 
         /// <summary>Credit for helping in a fight without landing a blow (e.g. plugging leaks).</summary>
         public void MarkContributed() => Contributed = true;
@@ -174,6 +177,7 @@ namespace Boatships
         private void Awake()
         {
             BoatshipsDeckFighter.Player = this;
+            BoatshipsGroundFighter.Player = this;
             rig = new GameObject("First Person Rig");
             rig.transform.SetParent(transform, false);
             controller = rig.AddComponent<CharacterController>();
@@ -265,6 +269,16 @@ namespace Boatships
             mounted = null; atHelm = false; hop = 0f; verticalSpeed = 0f; holdProgress = 0f;
         }
 
+        /// <summary>Moves the player on land without restarting the session (respawning at the landing).</summary>
+        public void TeleportGround(Vector3 position, float facing)
+        {
+            if (mode != Mode.Ground) return;
+            controller.enabled = false;
+            rig.transform.position = position;
+            controller.enabled = true;
+            yaw = facing; verticalSpeed = 0f;
+        }
+
         /// <summary>Takes the wheel standing at <paramref name="standLocal"/> (deck space), facing the bow.</summary>
         public void MountHelm(Vector3 standLocal)
         {
@@ -291,7 +305,7 @@ namespace Boatships
             mode = Mode.None;
             OnFoot = false;
             hop = 0f;
-            atHelm = false; knockedUntil = 0f; revived = null; holdProgress = 0f; HelmInput = Vector2.zero;
+            atHelm = false; knockedUntil = 0f; revived = null; holdProgress = 0f; HelmInput = Vector2.zero; CombatMode = false;
             mounted = null; focused = null; deck = null;
             interactables.Clear();
             exitAction = null;
@@ -477,14 +491,17 @@ namespace Boatships
             }
             else if (mode == Mode.Ground)
             {
-                cam.transform.SetPositionAndRotation(rig.transform.position + Vector3.up * EyeHeight, Quaternion.Euler(pitch, yaw, 0f));
+                cam.transform.SetPositionAndRotation(rig.transform.position + Vector3.up * (KnockedOut ? EyeHeight * 0.25f : EyeHeight),
+                    Quaternion.Euler(KnockedOut ? -30f : pitch, yaw, KnockedOut ? 25f : 0f));
             }
             swing = Mathf.Max(0f, swing - Time.deltaTime * 3.2f);
-            bool armed = mode == Mode.Deck && mounted == null && !atHelm && !KnockedOut;
-            viewSword.gameObject.SetActive(armed && Weapon == HandWeapon.Cutlass);
+            bool armed = (mode == Mode.Deck || CombatMode) && mounted == null && !atHelm && !KnockedOut;
+            // Street fighting on land is cutlass only; the pistol is for deck actions.
+            bool pistolDrawn = armed && mode == Mode.Deck && Weapon == HandWeapon.Pistol;
+            viewSword.gameObject.SetActive(armed && !pistolDrawn);
             viewSword.localRotation = Blocking ? Quaternion.Euler(-10f, -60f, 80f) :
                 Quaternion.Euler(-25f + Mathf.Sin(swing * Mathf.PI) * 85f, -10f + Mathf.Sin(swing * Mathf.PI) * 40f, 0f);
-            viewPistol.gameObject.SetActive(armed && Weapon == HandWeapon.Pistol);
+            viewPistol.gameObject.SetActive(pistolDrawn);
             recoil = Mathf.Max(0f, recoil - Time.deltaTime * 5f);
             // Reloading tips the pistol down to ram powder and ball; firing kicks it up.
             float reload = Reloading ? Mathf.Sin(Mathf.Clamp01(1f - (reloadDoneAt - Time.time) / PistolReloadSeconds) * Mathf.PI) : 0f;
@@ -577,6 +594,7 @@ namespace Boatships
                 if (mounted.Fire()) Contributed = true;
                 return;
             }
+            if (mode == Mode.Ground && CombatMode && !Blocking && Time.time >= nextAttack) { AttackOnLand(); return; }
             if (mode != Mode.Deck || atHelm) return;
             if (Weapon == HandWeapon.Pistol) { FirePistol(); return; }
             if (Blocking || Time.time < nextAttack) return;
@@ -641,6 +659,33 @@ namespace Boatships
             distance = along;
             if (along < 0f) return false;
             return (toCentre - ray.direction * along).sqrMagnitude <= radius * radius;
+        }
+
+        private void AttackOnLand()
+        {
+            nextAttack = Time.time + 0.55f / Mathf.Max(0.3f, SwingSpeedMultiplier);
+            swing = 1f;
+            BoatshipsAudio.Play2D(Sfx.Swing);
+            Vector3 forward = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
+            Vector3 feet = rig.transform.position;
+            BoatshipsGroundFighter best = null;
+            float bestDistance = Reach * ReachMultiplier;
+            foreach (BoatshipsGroundFighter fighter in BoatshipsGroundFighter.All)
+            {
+                if (fighter.Team != 1 || !fighter.Alive) continue;
+                Vector3 offset = fighter.World - feet;
+                offset.y = 0f;
+                float distance = offset.magnitude;
+                if (distance > bestDistance) continue;
+                if (distance > 0.15f && Vector3.Angle(forward, offset) > 65f) continue;
+                bestDistance = distance; best = fighter;
+            }
+            if (best == null) return;
+            BoatshipsAudio.Play(Sfx.SwordHit, best.World);
+            int fighting = character != null ? character.Skill(CharacterSkill.Fighting) : 0;
+            best.TakeHit(16f * DamageMultiplier * (1f + fighting * 0.12f));
+            Contributed = true;
+            if (!best.Alive) Kills++;
         }
 
         // ───────────────────────────── Input ─────────────────────────────
@@ -749,7 +794,7 @@ namespace Boatships
 
         private void UpdateHud()
         {
-            bool combat = mode == Mode.Deck;
+            bool combat = mode == Mode.Deck || CombatMode;
             bool locked = Cursor.lockState == CursorLockMode.Locked;
             // The prompt and health lines only change on events; rebuild their strings only then (not every frame).
             bool pistol = combat && Weapon == HandWeapon.Pistol;

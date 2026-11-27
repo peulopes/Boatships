@@ -238,7 +238,8 @@ namespace Boatships
             }
             TravelMode mode = travel != null ? travel.Mode : TravelMode.Battle;
             bool fighting = (shipBattle != null && shipBattle.Active) ||
-                (travel != null && (mode == TravelMode.Battle || mode == TravelMode.CrewBattle) && BoatshipsDeckFighter.All.Count > 0);
+                (travel != null && (mode == TravelMode.Battle || mode == TravelMode.CrewBattle) && BoatshipsDeckFighter.All.Count > 0) ||
+                HostilesAshore();
             bool ashore = travel != null && (mode == TravelMode.Town || mode == TravelMode.Port);
             bool onDeck = BoatshipsFirstPerson.OnFoot && !ashore;
             float speed = flagship != null ? Mathf.Abs(flagship.CurrentSpeed) : 0f;
@@ -261,6 +262,14 @@ namespace Boatships
         {
             if (source == null) return;
             source.volume = Mathf.MoveTowards(source.volume, target * master, dt / seconds * Mathf.Max(0.05f, master));
+        }
+
+        /// <summary>A town assault: enemy soldiers on their feet in the streets.</summary>
+        private static bool HostilesAshore()
+        {
+            foreach (BoatshipsGroundFighter fighter in BoatshipsGroundFighter.All)
+                if (fighter != null && fighter.Team == 1 && fighter.Alive) return true;
+            return false;
         }
 
         private void OnDestroy()

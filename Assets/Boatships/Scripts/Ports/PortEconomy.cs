@@ -183,7 +183,7 @@ namespace Boatships
                 Name = FirstNames[rng.Next(FirstNames.Length)] + " " + LastNames[rng.Next(LastNames.Length)],
                 Role = Roles[rng.Next(Roles.Length)],
                 Skill = skill,
-                Cost = 45 + skill * 2,
+                Cost = Mathf.RoundToInt((45 + skill * 2) * (RecruitCostMultiplier != null ? RecruitCostMultiplier(port.Cell) : 1f)),
                 Wage = 3 + skill / 15
             };
             return offer;
@@ -413,6 +413,9 @@ namespace Boatships
 
         /// <summary>Collect every kind of floating reward through the same saved, duplicate-safe path.</summary>
         /// <summary>Whether uncollected cargo floats within <paramref name="radius"/> of a point.</summary>
+        /// <summary>Recruiting price multiplier per port (cheaper in the player's own cities).</summary>
+        public static Func<Vector2Int, float> RecruitCostMultiplier;
+
         public bool HasLootNear(Vector3 position, float radius)
         {
             foreach (LootCache cache in state.pendingLoot)

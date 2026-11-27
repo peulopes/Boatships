@@ -63,6 +63,10 @@ namespace Boatships
             BoatshipsInventory inventory = host.AddComponent<BoatshipsInventory>();
             inventory.Configure(director.World, economy, character, travel, view, firstPerson, flagship.transform);
             travel.BindInventory(inventory);
+            BoatshipsConquest conquest = host.AddComponent<BoatshipsConquest>();
+            conquest.Configure(director.World, economy, character, travel, view, firstPerson,
+                Object.FindAnyObjectByType<BoatshipsCrewManager>(), flagship.transform);
+            travel.BindConquest(conquest);
             BoatshipsShipBattle shipBattle = host.AddComponent<BoatshipsShipBattle>();
             shipBattle.Configure(firstPerson, director, economy, character, Object.FindAnyObjectByType<BoatshipsCrewManager>(), ocean, travel);
             travel.BindShipBattle(shipBattle);

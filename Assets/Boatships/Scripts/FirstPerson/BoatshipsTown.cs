@@ -69,6 +69,10 @@ namespace Boatships
         /// <summary>Named parts the harbour checks look up; merging keeps their (empty) objects.</summary>
         private static readonly HashSet<string> KeptParts = new HashSet<string> { "Walls", "Roof", "Pier" };
         public Transform Root => root != null ? root.transform : null;
+        /// <summary>The town square (world X/Z): the heart of the town, held by its garrison in an assault.</summary>
+        public Vector2 Plaza { get; private set; }
+        /// <summary>Where the pier meets the beach (world X/Z).</summary>
+        public Vector2 Landing { get; private set; }
         private static readonly HashSet<string> Clutter = new HashSet<string> { "Tree Trunk", "Low Poly Canopy", "Palm Tree", "Low Poly Rock" };
         // Shared by every town (all harbours use the same palette), so building a town creates no materials.
         private static readonly Dictionary<long, Material> materials = new Dictionary<long, Material>();
@@ -151,6 +155,7 @@ namespace Boatships
             BuildPier(pierA, pierB);
 
             Vector2 plaza = landing + inland * 3f;
+            Plaza = plaza; Landing = landing;
             HideIslandClutter(plaza, 10.5f, landing);
             BuildStreet(landing, plaza, sideways);
             BuildSquare(plaza, inland);
