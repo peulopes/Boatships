@@ -282,6 +282,11 @@ namespace Boatships
 
         // ───────────────────────────── Menus ─────────────────────────────
 
+        /// <summary>Colour of a port's map marker when it is not the default (e.g. the player owns it).</summary>
+        public static Func<Vector2Int, Color?> PortColorOverride;
+        /// <summary>Redraws the island markers (after a port changes hands).</summary>
+        public void RefreshIslandMarkers() => markerDiscoveries = -1;
+
         public void ShowMenu(string title, string body, List<MapMenuOption> options)
         {
             ClearSelection();
@@ -566,6 +571,9 @@ namespace Boatships
                     {
                         Color color = site.Kind == IslandKind.PortSite ? new Color(1f, 0.8f, 0.25f) :
                             site.Kind == IslandKind.PirateBaseSite ? new Color(0.9f, 0.15f, 0.12f) : new Color(1f, 1f, 0.55f);
+                        // Conquered ports fly the player's colours on the map.
+                        Color? owner = PortColorOverride != null ? PortColorOverride(site.Cell) : null;
+                        if (owner.HasValue) color = owner.Value;
                         Image icon = MarkerImage("Icon", root, null, color);
                         icon.rectTransform.sizeDelta = new Vector2(16f, 16f);
                         icon.rectTransform.localRotation = Quaternion.Euler(0f, 0f, 45f);

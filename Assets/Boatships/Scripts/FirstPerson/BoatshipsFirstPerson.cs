@@ -123,6 +123,9 @@ namespace Boatships
         public bool KnockedOut => knockedUntil > 0f;
         public DeckSpace CurrentDeck => mode == Mode.Deck ? deck : null;
         public bool Crossing => Time.time - crossStarted < CrossSeconds;
+        public Vector3 FeetWorld => FeetPosition;
+        /// <summary>Shows the combat HUD (health, attack keys) on land too, e.g. while storming a town.</summary>
+        public bool CombatMode { get; set; }
 
         public bool OnDeck(VoxelHull hull) => mode == Mode.Deck && deck != null && deck.Hull == hull;
         public void SetStatus(string text) => status = text ?? "";
@@ -140,6 +143,7 @@ namespace Boatships
         private void Awake()
         {
             BoatshipsDeckFighter.Player = this;
+            BoatshipsGroundFighter.Player = this;
             rig = new GameObject("First Person Rig");
             rig.transform.SetParent(transform, false);
             controller = rig.AddComponent<CharacterController>();
@@ -206,6 +210,16 @@ namespace Boatships
             mounted = null; atHelm = false; hop = 0f; verticalSpeed = 0f; holdProgress = 0f;
         }
 
+        /// <summary>Moves the player on land without restarting the session (respawning at the landing).</summary>
+        public void TeleportGround(Vector3 position, float facing)
+        {
+            if (mode != Mode.Ground) return;
+            controller.enabled = false;
+            rig.transform.position = position;
+            controller.enabled = true;
+            yaw = facing; verticalSpeed = 0f;
+        }
+
         /// <summary>Takes the wheel standing at <paramref name="standLocal"/> (deck space), facing the bow.</summary>
         public void MountHelm(Vector3 standLocal)
         {
@@ -232,7 +246,7 @@ namespace Boatships
             mode = Mode.None;
             OnFoot = false;
             hop = 0f;
-            atHelm = false; knockedUntil = 0f; revived = null; holdProgress = 0f; HelmInput = Vector2.zero;
+            atHelm = false; knockedUntil = 0f; revived = null; holdProgress = 0f; HelmInput = Vector2.zero; CombatMode = false;
             mounted = null; focused = null; deck = null;
             interactables.Clear();
             exitAction = null;
@@ -388,10 +402,11 @@ namespace Boatships
             }
             else if (mode == Mode.Ground)
             {
-                cam.transform.SetPositionAndRotation(rig.transform.position + Vector3.up * EyeHeight, Quaternion.Euler(pitch, yaw, 0f));
+                cam.transform.SetPositionAndRotation(rig.transform.position + Vector3.up * (KnockedOut ? EyeHeight * 0.25f : EyeHeight),
+                    Quaternion.Euler(KnockedOut ? -30f : pitch, yaw, KnockedOut ? 25f : 0f));
             }
             swing = Mathf.Max(0f, swing - Time.deltaTime * 3.2f);
-            viewSword.gameObject.SetActive(mode == Mode.Deck && mounted == null && !atHelm && !KnockedOut);
+            viewSword.gameObject.SetActive((mode == Mode.Deck || CombatMode) && mounted == null && !atHelm && !KnockedOut);
             viewSword.localRotation = Blocking ? Quaternion.Euler(-10f, -60f, 80f) :
                 Quaternion.Euler(-25f + Mathf.Sin(swing * Mathf.PI) * 85f, -10f + Mathf.Sin(swing * Mathf.PI) * 40f, 0f);
         }
@@ -480,6 +495,7 @@ namespace Boatships
                 if (mounted.Fire()) Contributed = true;
                 return;
             }
+            if (mode == Mode.Ground && CombatMode && !Blocking && Time.time >= nextAttack) { AttackOnLand(); return; }
             if (mode != Mode.Deck || Blocking || atHelm || Time.time < nextAttack) return;
             nextAttack = Time.time + 0.55f / Mathf.Max(0.3f, SwingSpeedMultiplier);
             swing = 1f;
@@ -490,6 +506,31 @@ namespace Boatships
             {
                 if (fighter.Team != 1 || !fighter.Alive || fighter.Deck == null || fighter.Deck.Hull != deck.Hull) continue;
                 Vector3 offset = (fighter.Local - deckLocal) * deck.Scale;
+                offset.y = 0f;
+                float distance = offset.magnitude;
+                if (distance > bestDistance) continue;
+                if (distance > 0.15f && Vector3.Angle(forward, offset) > 65f) continue;
+                bestDistance = distance; best = fighter;
+            }
+            if (best == null) return;
+            int fighting = character != null ? character.Skill(CharacterSkill.Fighting) : 0;
+            best.TakeHit(16f * DamageMultiplier * (1f + fighting * 0.12f));
+            Contributed = true;
+            if (!best.Alive) Kills++;
+        }
+
+        private void AttackOnLand()
+        {
+            nextAttack = Time.time + 0.55f / Mathf.Max(0.3f, SwingSpeedMultiplier);
+            swing = 1f;
+            Vector3 forward = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
+            Vector3 feet = rig.transform.position;
+            BoatshipsGroundFighter best = null;
+            float bestDistance = Reach * ReachMultiplier;
+            foreach (BoatshipsGroundFighter fighter in BoatshipsGroundFighter.All)
+            {
+                if (fighter.Team != 1 || !fighter.Alive) continue;
+                Vector3 offset = fighter.World - feet;
                 offset.y = 0f;
                 float distance = offset.magnitude;
                 if (distance > bestDistance) continue;
@@ -609,7 +650,7 @@ namespace Boatships
 
         private void UpdateHud()
         {
-            bool combat = mode == Mode.Deck;
+            bool combat = mode == Mode.Deck || CombatMode;
             bool locked = Cursor.lockState == CursorLockMode.Locked;
             // The prompt and health lines only change on events; rebuild their strings only then (not every frame).
             int kind, bucket = 0;

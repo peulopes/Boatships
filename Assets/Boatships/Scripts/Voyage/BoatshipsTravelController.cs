@@ -25,6 +25,9 @@ namespace Boatships
         public float speed = 16f;
         public float cooldown;
         public bool employer;
+        /// <summary>A war fleet sent to besiege one of the player's cities (it parks there once it arrives).</summary>
+        public bool siegeFleet;
+        public Vector2Int siegeTarget;
         [NonSerialized] public bool chasing;
     }
 
@@ -198,6 +201,96 @@ namespace Boatships
         { fps = firstPerson; town = portTown; crewBattle = crewFight; }
 
         public void BindInventory(BoatshipsInventory items) => inventory = items;
+        public void BindConquest(BoatshipsConquest wars) => conquest = wars;
+        private BoatshipsConquest conquest;
+        private Action portBattleWon;
+        public TravelMode CurrentMode => Mode;
+        public bool HasParty(string id) => FindParty(id) != null;
+        public void RemoveParty(string id) { MapParty party = FindParty(id); if (party != null) state.parties.Remove(party); }
+        /// <summary>Leaves a first-person town visit or assault for the world map.</summary>
+        public void LeaveTown() { if (Mode == TravelMode.Town) ReturnToMap(false); }
+        public float Hours => state != null ? state.hours : 0f;
+
+        /// <summary>A sea battle off a port's harbour (bombarding its fort, or breaking a siege of it).</summary>
+        public bool BeginPortBattle(ArchipelagoWorld.IslandSite site, IList<EncounterKind> kinds, int tier, Action won)
+        {
+            if (!Captain || !Live) return false;
+            Vector2 mooring = BoatshipsTown.MooringPoint(site);
+            Vector2 outward = (mooring - site.Center).sqrMagnitude > 0.01f ? (mooring - site.Center).normalized : Vector2.down;
+            PlaceShip(KeepOnWater(mooring + outward * 24f), site.Center);
+            EnterLocal(TravelMode.Battle, site, true);
+            battleIds.AddRange(director.SpawnBattle(kinds, Mathf.Clamp(tier, 1, 5), 26f));
+            portBattleWon = won;
+            Mode = TravelMode.Battle;
+            return true;
+        }
+
+        /// <summary>Lands the player at a town's pier for a first-person fight through its streets.
+        /// Returns the town (its plaza is the objective), or null if it could not be entered.</summary>
+        public BoatshipsTown BeginTownAssault(ArchipelagoWorld.IslandSite site, Action retreat)
+        {
+            if (fps == null || town == null || !Captain) return null;
+            if (docking.IsDocked) docking.Undock();
+            BoatshipsTown harbour = BoatshipsTown.For(site.Cell);
+            Vector2 mooring = harbour != null ? harbour.Mooring : BoatshipsTown.MooringPoint(site);
+            PlaceShip(KeepOnWater(mooring), site.Center);
+            EnterLocal(TravelMode.Town, site, true);
+            if (movement != null) movement.enabled = false;
+            if (weapons != null) weapons.enabled = false;
+            UpdateFlagshipVisibility();
+            townSite = site;
+            if (harbour == null) harbour = BoatshipsTown.For(site.Cell);
+            Vector3 spawn;
+            float facing;
+            if (harbour == null)
+            {
+                harbour = town;
+                town.Build(site, world.Seed, new Vector3(mooring.x, 0f, mooring.y), null, out spawn, out facing);
+            }
+            else { spawn = harbour.Spawn; facing = harbour.Facing; }
+            activeTown = harbour;
+            harbour.Handler = null;
+            fps.BeginGround(spawn, facing);
+            fps.CombatMode = true;
+            fps.SetExit("Sound the retreat", retreat);
+            return harbour;
+        }
+
+        /// <summary>Sends a war fleet of a faction to besiege a city. Returns its party id.</summary>
+        public string SpawnSiegeFleet(MapFaction faction, Vector2Int target, int tier)
+        {
+            if (state == null || !world.TryGetIsland(target, out ArchipelagoWorld.IslandSite city)) return null;
+            ArchipelagoWorld.IslandSite origin = city;
+            float best = float.MaxValue;
+            int portFaction = BoatshipsConquest.PortFactionOf(faction);
+            foreach (ArchipelagoWorld.IslandSite port in ports)
+            {
+                if (port.Cell == target || BoatshipsFactions.OfPort(port.Cell) != portFaction || (conquest != null && conquest.Owns(port.Cell))) continue;
+                float d = (port.Center - city.Center).sqrMagnitude;
+                if (d < best) { best = d; origin = port; }
+            }
+            Vector2 start = Coast(origin, city.Center, 10f);
+            if (origin.Cell == city.Cell) start = Coast(city, city.Center + Vector2.up * 200f, 120f);
+            var party = new MapParty
+            {
+                id = "party_" + state.serial++, name = BoatshipsNames.Ship(random), faction = faction,
+                tier = Mathf.Clamp(tier, 2, 5), position = start, speed = SpeedOf(faction, tier) * 0.9f,
+                destination = target, siegeFleet = true, siegeTarget = target
+            };
+            state.parties.Add(party);
+            return party.id;
+        }
+
+        /// <summary>The ships a party fields in battle.</summary>
+        public List<EncounterKind> FleetOf(MapFaction faction, int tier)
+        {
+            var kinds = new List<EncounterKind>();
+            if (faction == MapFaction.Merchant) { kinds.Add(EncounterKind.Brig); if (tier >= 3) kinds.Add(EncounterKind.Brig); }
+            else if (faction == MapFaction.Navy) { kinds.Add(EncounterKind.Patrol); if (tier >= 3) kinds.Add(EncounterKind.Patrol); }
+            else { kinds.Add(tier <= 2 ? EncounterKind.Raider : EncounterKind.Brig); if (tier >= 3) kinds.Add(EncounterKind.Raider); }
+            if (tier >= 5) kinds.Add(EncounterKind.Patrol);
+            return kinds;
+        }
         private BoatshipsInventory inventory;
         public BoatshipsInventory Inventory => inventory;
 
@@ -771,6 +864,7 @@ namespace Boatships
             if (OnJob) return state.job.employer == MapFaction.Pirate ?
                 party.faction == MapFaction.Navy : party.faction == MapFaction.Pirate;
             if (!character.OwnsShip) return false;
+            if (conquest != null && conquest.AtWarWith(party.faction)) return true;
             return party.faction == MapFaction.Pirate ||
                 (party.faction == MapFaction.Navy && economy.Campaign.navyReputation <= -20);
         }
@@ -798,6 +892,12 @@ namespace Boatships
                     goal = destination.Center;
                     if (Vector2.Distance(party.position, destination.Center) <= destination.Radius * 0.78f + ArrivalMargin)
                     {
+                        if (party.siegeFleet)
+                        {
+                            // Blockading one of the player's cities: stay put and report in.
+                            if (conquest != null) conquest.OnSiegeFleetArrived(party);
+                            continue;
+                        }
                         if (party.employer) { CompleteJob(party, destination); return; }
                         Retarget(party);
                         continue;
@@ -862,10 +962,12 @@ namespace Boatships
 
         private void TownMenu(ArchipelagoWorld.IslandSite site, string prefix)
         {
+            if (conquest != null && conquest.OverrideTownMenu(site, prefix, () => TownMenu(site, null))) return;
             int faction = BoatshipsFactions.OfPort(site.Cell);
             string body = (string.IsNullOrEmpty(prefix) ? "" : prefix + "\n\n") +
+                (conquest != null && conquest.Owns(site.Cell) ? "Your port, flying your colours (formerly " + BoatshipsFactions.Name(faction) + ").\n" :
                 "A " + BoatshipsFactions.Name(faction) + " port. Your standing here: " +
-                BoatshipsFactions.Reputation(economy.Campaign, faction) + ".\n" +
+                BoatshipsFactions.Reputation(economy.Campaign, faction) + ".\n") +
                 "Gold " + economy.Gold + "   Rations " + economy.Rations + "   Crew " + economy.Crew.Count + "\n" +
                 (character.OwnsShip ? "Your sloop is moored in the harbor." : "You have no ship of your own.");
             var options = new List<MapMenuOption>();
@@ -883,6 +985,7 @@ namespace Boatships
             }
             if (inventory != null && inventory.Ready)
                 options.Add(new MapMenuOption("Market and armourer (trade goods, weapons, armour)", () => StoreMenu(site)));
+            if (conquest != null) conquest.AddTownOptions(site, options, () => TownMenu(site, null));
             options.Add(new MapMenuOption("Character", () => CharacterSheet(() => TownMenu(site, null))));
             if (inventory != null && inventory.Ready)
                 options.Add(new MapMenuOption("Inventory and ship's hold", () => inventory.InventoryMenu(() => TownMenu(site, null))));
@@ -1499,6 +1602,9 @@ namespace Boatships
         private void WinBattle()
         {
             battleWon = true;
+            Action won = portBattleWon;
+            portBattleWon = null;
+            won?.Invoke();
             MapParty party = FindParty(battlePartyId);
             if (party != null)
             {
@@ -1566,6 +1672,7 @@ namespace Boatships
                 Notify("You escaped from " + Describe(party) + ".");
             }
             battleIds.Clear(); battlePartyId = null; battleWon = false; raidBattle = false;
+            portBattleWon = null;
             if (ship != null) state.position = KeepOnWater(new Vector2(ship.position.x, ship.position.z));
             Vector3 forward = ship != null ? ship.forward : Vector3.forward;
             if (new Vector2(forward.x, forward.z).sqrMagnitude > 0.01f) state.heading = new Vector2(forward.x, forward.z).normalized;
