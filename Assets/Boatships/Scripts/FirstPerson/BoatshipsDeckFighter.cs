@@ -97,6 +97,10 @@ namespace Boatships
         private float diedAt;
 
         public int Team { get; private set; }
+        /// <summary>The ship's crew this sailor works for in a ship battle (null: a pure melee fighter).</summary>
+        public BoatshipsShipCrew Crew { get; set; }
+        public CrewDuty Duty { get; set; }
+        public bool Jumping => jumping;
         public float Health { get; private set; }
         public float MaxHealth { get; private set; }
         public bool Alive => Health > 0f;
@@ -167,11 +171,15 @@ namespace Boatships
                 if (jumpProgress >= 1f) { jumping = false; transform.localPosition = local; }
                 return;
             }
-            if (FindTarget(out Vector3 targetLocal, out BoatshipsDeckFighter enemy, out bool targetIsPlayer))
+            bool hasTarget = FindTarget(out Vector3 targetLocal, out BoatshipsDeckFighter enemy, out bool targetIsPlayer);
+            Vector3 toTarget = targetLocal - local;
+            toTarget.y = 0f;
+            float worldDistance = toTarget.magnitude * deck.Scale;
+            // Sailors in a ship battle keep working (guns, holes, water) unless a foe is upon them.
+            if (hasTarget && Crew != null && !Crew.ShouldFight(this, worldDistance)) hasTarget = false;
+            if (!hasTarget && Crew != null) Crew.Work(this, dt);
+            else if (hasTarget)
             {
-                Vector3 toTarget = targetLocal - local;
-                toTarget.y = 0f;
-                float worldDistance = toTarget.magnitude * deck.Scale;
                 if (toTarget.sqrMagnitude > 0.0001f) yaw = Mathf.Atan2(toTarget.x, toTarget.z) * Mathf.Rad2Deg;
                 if (worldDistance > BoatshipsFirstPerson.Reach * 0.85f)
                     local = deck.Constrain(local, local + toTarget.normalized * (Speed / deck.Scale) * dt);
@@ -188,6 +196,43 @@ namespace Boatships
             transform.localRotation = Quaternion.Euler(0f, yaw, 0f);
             swing = Mathf.Max(0f, swing - dt * 3.5f);
             if (sword != null) sword.localRotation = Quaternion.Euler(SwordArmPitch(1f - swing), 0f, 6f);
+        }
+
+        /// <summary>Walks toward a deck point. Returns true once there.</summary>
+        public bool WalkTo(Vector3 goal, float dt)
+        {
+            Vector3 to = goal - local;
+            to.y = 0f;
+            float remaining = to.magnitude;
+            if (remaining * deck.Scale < 0.08f) return true;
+            yaw = Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg;
+            Vector3 next = deck.Constrain(local, local + to / remaining * Mathf.Min(remaining, Speed / deck.Scale * dt));
+            // Blocked by a hole in the deck: close enough to work from here.
+            if ((next - local).sqrMagnitude < 1e-8f) return remaining * deck.Scale < 0.45f;
+            local = next;
+            return false;
+        }
+
+        /// <summary>Turns to face a deck point.</summary>
+        public void Face(Vector3 point)
+        {
+            Vector3 to = point - local;
+            if (to.x * to.x + to.z * to.z > 1e-6f) yaw = Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg;
+        }
+
+        /// <summary>Hammering, hauling, bailing: the arm swings while working.</summary>
+        public void Toil() { if (swing <= 0f) swing = 0.8f; }
+
+        /// <summary>Climbs (swings) across onto another ship's deck.</summary>
+        public void CrossTo(DeckSpace other, Vector3 landing)
+        {
+            if (other == null || !other.Valid || !Alive) return;
+            Vector3 from = transform.position;
+            deck = other;
+            transform.SetParent(other.Frame, true);
+            transform.localScale = Vector3.one / other.Scale;
+            local = other.Constrain(landing, landing);
+            JumpFrom(from);
         }
 
         /// <summary>Guard with the cutlass held forward, wind up overhead, then chop down (t: 0 → 1 over a swing).</summary>

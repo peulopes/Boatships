@@ -37,6 +37,13 @@ namespace Boatships
         public float HullSpeedMultiplier { get; set; } = 1f;
         public float HullDraft { get; set; }
 
+        /// <summary>First-person sailing: the helm and sails drive the ship instead of WASD.
+        /// Throttle is the sail setting (-0.35 backing … 1 full sail) and persists when nobody is at the wheel.</summary>
+        public bool ExternalControl { get; set; }
+        public float ExternalThrottle { get; set; }
+        public float ExternalRudder { get; set; }
+        public float CurrentSpeed => currentSpeed;
+
         public OceanWaves Ocean { set => ocean = value; }
         public VirtualJoystick Joystick { set => moveJoystick = value; }
         public Transform VisualPivot { set => visualPivot = value; }
@@ -54,6 +61,7 @@ namespace Boatships
         private Vector2 ReadMoveInput()
         {
             // WASD steers; the arrow keys are reserved for cannon aim (WeaponGroupCombat).
+            if (ExternalControl) return new Vector2(Mathf.Clamp(ExternalRudder, -1f, 1f), Mathf.Clamp(ExternalThrottle, -1f, 1f));
             Keyboard kb = Keyboard.current;
             if (kb == null || BoatshipsUI.Typing) return Vector2.zero;
 

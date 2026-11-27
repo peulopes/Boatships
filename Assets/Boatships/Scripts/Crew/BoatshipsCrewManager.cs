@@ -73,6 +73,30 @@ namespace Boatships
         private string status = "Waiting for tavern roster...";
 
         public int ActiveCrewCount => agents.Count;
+
+        /// <summary>One sailor of the roster as the first-person battle needs it.</summary>
+        public struct BattleSailor { public string Name; public CrewDuty Duty; public int Skill; }
+
+        /// <summary>The available (not injured, not overboard) crew with their duties.</summary>
+        public void GetBattleRoster(List<BattleSailor> result)
+        {
+            result.Clear();
+            foreach (Agent a in agents)
+                if (!a.unavailable && a.member != null)
+                    result.Add(new BattleSailor { Name = a.member.displayName, Duty = a.duty, Skill = a.member.skill });
+        }
+
+        private bool avatarsHidden;
+        /// <summary>Hides the small deck avatars while the crew is simulated full size in a first-person battle.</summary>
+        public bool AvatarsHidden
+        {
+            get => avatarsHidden;
+            set
+            {
+                avatarsHidden = value;
+                foreach (Agent a in agents) if (a.visual != null) a.visual.gameObject.SetActive(!value && !a.unavailable);
+            }
+        }
         public void SetBoardingTarget(string key, Transform destination)
         {
             foreach (Agent agent in agents)
@@ -183,6 +207,7 @@ namespace Boatships
                 if (keyboard.f6Key.wasPressedThisFrame) SelectNextCrew();
                 if (keyboard.f7Key.wasPressedThisFrame) CycleSelectedDuty();
             }
+            if (avatarsHidden) return;
             for (int i = 0; i < agents.Count; ++i)
                 StepAgent(agents[i], i, Time.deltaTime);
         }

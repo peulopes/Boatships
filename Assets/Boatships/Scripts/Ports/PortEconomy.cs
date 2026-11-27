@@ -409,6 +409,17 @@ namespace Boatships
         }
 
         /// <summary>Collect every kind of floating reward through the same saved, duplicate-safe path.</summary>
+        /// <summary>Whether uncollected cargo floats within <paramref name="radius"/> of a point.</summary>
+        public bool HasLootNear(Vector3 position, float radius)
+        {
+            foreach (LootCache cache in state.pendingLoot)
+            {
+                Vector2 delta = new Vector2(position.x - cache.x, position.z - cache.z);
+                if (delta.sqrMagnitude <= radius * radius) return true;
+            }
+            return false;
+        }
+
         public int CollectNearbyLoot(Vector3 shipPosition, float radius, out string description)
         {
             int count = 0;
@@ -605,6 +616,16 @@ namespace Boatships
         /// <summary>Drops records of sunk encounters so the campaign list (iterated several times a second and
         /// written in every checkpoint) does not grow for the whole campaign. Call outside any loop over
         /// <see cref="Campaign"/>.encounters.</summary>
+        /// <summary>Uses wood from the hold (e.g. a plank to patch a hole in battle).</summary>
+        public bool TrySpendWood(int amount)
+        {
+            if (saveLocked || amount <= 0 || state.wood < amount) return false;
+            state.wood -= amount;
+            if (Save()) return true;
+            state.wood += amount;
+            return false;
+        }
+
         public bool PruneDefeatedEncounters()
         {
             if (saveLocked || state == null || state.campaign == null || state.campaign.encounters == null) return false;

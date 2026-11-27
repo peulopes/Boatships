@@ -60,6 +60,9 @@ namespace Boatships
             BoatshipsCrewBattle crewBattle = host.AddComponent<BoatshipsCrewBattle>();
             crewBattle.Configure(director, firstPerson, character, ocean);
             travel.BindFirstPerson(firstPerson, town, crewBattle);
+            BoatshipsShipBattle shipBattle = host.AddComponent<BoatshipsShipBattle>();
+            shipBattle.Configure(firstPerson, director, economy, character, Object.FindAnyObjectByType<BoatshipsCrewManager>(), ocean, travel);
+            travel.BindShipBattle(shipBattle);
             BoatshipsBoarding boarding = Object.FindAnyObjectByType<BoatshipsBoarding>();
             if (boarding != null)
                 host.AddComponent<BoatshipsBoardingFirstPerson>().Configure(boarding, firstPerson, travel, flagship.transform);

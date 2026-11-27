@@ -47,6 +47,18 @@ namespace Boatships
         private int repairKits;
         private int submergedOpenings;
 
+        /// <summary>A hole in the outer skin, as the deck crew sees it.</summary>
+        public struct Breach
+        {
+            public int Key;
+            public Vector3 HullLocal;   // block centre in the hull's local space
+            public bool Patched;
+            public bool Submerged;
+        }
+
+        /// <summary>With manual bailing, patched holes stop the inflow but the water stays until it is bailed out.</summary>
+        public bool ManualBailing { get; set; }
+
         public bool IsSinking => sinking;
         public float FloodFraction
         {
@@ -133,7 +145,7 @@ namespace Boatships
             float dt = Time.fixedDeltaTime;
             for (int i = 0; i < 6; ++i)
             {
-                float delta = inflow[i] > 0f ? inflow[i] : -drainWhenPatched;
+                float delta = inflow[i] > 0f ? inflow[i] : ManualBailing ? 0f : -drainWhenPatched;
                 compartments[i] = Mathf.Clamp01(compartments[i] + delta * dt);
             }
 
@@ -215,6 +227,47 @@ namespace Boatships
             repairKits--;
             submergedOpenings = 0;
             return true;
+        }
+
+        /// <summary>Lists the current outer-skin holes (patched or not).</summary>
+        public void GetBreaches(List<Breach> result)
+        {
+            result.Clear();
+            if (hull == null || hull.Definition == null) return;
+            float halfBlock = hull.Definition.BlockSize * 0.5f;
+            foreach (Opening hole in openings)
+            {
+                Vector3 local = hull.Definition.BlockCenter(hole.x, hole.y, hole.z);
+                bool submerged = false;
+                if (ocean != null)
+                {
+                    Vector3 world = hull.transform.TransformPoint(local);
+                    submerged = ocean.SampleHeight(world.x, world.z, Time.time) > world.y - halfBlock;
+                }
+                result.Add(new Breach { Key = hole.key, HullLocal = local, Patched = patches.Contains(hole.key), Submerged = submerged });
+            }
+        }
+
+        /// <summary>Nails a plank over one hole. Returns false if it is not an open hole.</summary>
+        public bool PatchBreach(int key)
+        {
+            if (sinking || patches.Contains(key)) return false;
+            foreach (Opening hole in openings)
+                if (hole.key == key) { patches.Add(key); return true; }
+            return false;
+        }
+
+        /// <summary>Throws water overboard: lowers the average flood level by up to <paramref name="amount"/>,
+        /// taking most from the fullest compartments. Returns how much the average went down.</summary>
+        public float Bail(float amount)
+        {
+            if (sinking || amount <= 0f) return 0f;
+            float total = 0f;
+            for (int i = 0; i < compartments.Length; ++i) total += compartments[i];
+            if (total <= 0f) return 0f;
+            float take = Mathf.Min(amount * compartments.Length, total);
+            for (int i = 0; i < compartments.Length; ++i) compartments[i] = Mathf.Max(0f, compartments[i] - compartments[i] / total * take);
+            return take / compartments.Length;
         }
 
         public ShipFloodRecord CaptureFlooding()

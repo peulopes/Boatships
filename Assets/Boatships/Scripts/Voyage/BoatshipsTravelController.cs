@@ -197,6 +197,10 @@ namespace Boatships
         public void BindFirstPerson(BoatshipsFirstPerson firstPerson, BoatshipsTown portTown, BoatshipsCrewBattle crewFight)
         { fps = firstPerson; town = portTown; crewBattle = crewFight; }
 
+        /// <summary>Sea battles of the player's own ship are fought in first person on deck.</summary>
+        public void BindShipBattle(BoatshipsShipBattle battle) => shipBattle = battle;
+        private BoatshipsShipBattle shipBattle;
+
         public bool FirstPersonActive => fps != null && fps.Active;
 
         private BoatshipsFirstPerson fps;
@@ -232,6 +236,7 @@ namespace Boatships
 
         private void ExitFirstPerson()
         {
+            if (shipBattle != null && shipBattle.Active) shipBattle.End();
             if (crewBattle != null && crewBattle.Active) return;
             if (activeTown != null)
             {
@@ -327,6 +332,12 @@ namespace Boatships
                 battleIds.Clear(); battlePartyId = null; raidBattle = false;
                 Mode = TravelMode.Port;
                 return;
+            }
+            if (Mode == TravelMode.Battle && shipBattle != null && fps != null && battleIds.Count > 0)
+            {
+                if (shipBattle.Active) shipBattle.SyncEnemies(battleIds);
+                else if (!shipBattle.Abandoned && !fps.Active && (flooding == null || !flooding.IsSinking) && ship != null)
+                    shipBattle.Begin(ship.GetComponent<ShipCombatTarget>(), movement, weapons, battleIds);
             }
             if (!battleWon && battleIds.Count > 0 && director.RemainingHostiles(battleIds) == 0) WinBattle();
         }
@@ -1407,6 +1418,7 @@ namespace Boatships
 
         private void EnterLocal(TravelMode mode, ArchipelagoWorld.IslandSite site, bool hasSite)
         {
+            if (shipBattle != null) { shipBattle.End(); shipBattle.ResetAbandoned(); }
             Mode = mode;
             localIsland = site; hasLocalIsland = hasSite;
             battleIds.Clear(); battlePartyId = null; battleWon = false; raidBattle = false;

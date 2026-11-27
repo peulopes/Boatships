@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Boatships
@@ -76,6 +77,31 @@ namespace Boatships
         }
 
         public ShipCombatTarget Target => player;
+        public float CloseRange => closeRange;
+        public float ApproachRange => approachRange;
+
+        /// <summary>Every broadside muzzle, port then starboard.</summary>
+        public IEnumerable<Transform> Muzzles
+        {
+            get
+            {
+                if (portMuzzles != null) foreach (Transform muzzle in portMuzzles) yield return muzzle;
+                if (starboardMuzzles != null) foreach (Transform muzzle in starboardMuzzles) yield return muzzle;
+            }
+        }
+
+        /// <summary>When the ship's crew is simulated on deck, its gunners load and fire the deck cannons by hand,
+        /// so the automatic broadside is off.</summary>
+        public bool CrewGunnery { get; set; }
+        /// <summary>False when nobody is left at the wheel: the ship drifts.</summary>
+        public bool Helmed { get; set; } = true;
+
+        /// <summary>Distances the ship keeps from its target (closer lets its crew board).</summary>
+        public void SetEngagementRanges(float close, float approach)
+        {
+            closeRange = Mathf.Max(1f, close);
+            approachRange = Mathf.Max(closeRange + 1f, approach);
+        }
 
         public EnemyState State => state;
         public float HullFraction => self != null && self.TotalVoxels > 0
@@ -189,8 +215,9 @@ namespace Boatships
                 throttle = speed * 0.15f;
             }
 
+            if (!Helmed) { throttle = 0f; course = body.rotation.eulerAngles.y; }
             FollowOcean(dt, throttle, course);
-            if (inAttackBand && state == EnemyState.Broadside && Time.time >= nextFireAllowedAt)
+            if (!CrewGunnery && inAttackBand && state == EnemyState.Broadside && Time.time >= nextFireAllowedAt)
                 TryFireBroadside(distance);
         }
 
