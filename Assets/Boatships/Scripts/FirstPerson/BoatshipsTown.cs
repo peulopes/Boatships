@@ -92,7 +92,7 @@ namespace Boatships
         public static BoatshipsTown For(Vector2Int cell)
         {
             foreach (BoatshipsTown harbour in Harbours)
-                if (harbour != null && harbour.Built && harbour.Cell == cell) return harbour;
+                if (harbour != null && harbour.Built && harbour.isActiveAndEnabled && harbour.Cell == cell) return harbour;
             return null;
         }
 

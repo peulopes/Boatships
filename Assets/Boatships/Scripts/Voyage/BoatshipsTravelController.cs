@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
+using UnityEngine.Rendering.Universal;
 
 namespace Boatships
 {
@@ -148,6 +149,8 @@ namespace Boatships
             public int Mask;
             public CameraClearFlags Flags;
             public Color Color;
+            public bool PostProcessing;
+            public bool HasCameraData;
         }
 
         public TravelMode Mode { get; private set; } = TravelMode.Map;
@@ -448,13 +451,21 @@ namespace Boatships
             presentationApplied = true;
             mapPresentation = map;
             if (director != null) director.Suspended = map;
+            // On the world map the 3D scene is not shown: stop streaming islands (and their towns, forts and
+            // townsfolk) and stop deforming the ocean mesh. Ship buoyancy still samples the wave function.
+            if (world != null) world.Suspended = map;
+            if (ocean != null) ocean.enabled = !map;
             if (map)
             {
                 cameras.Clear();
                 foreach (Camera camera in Camera.allCameras)
                 {
+                    UniversalAdditionalCameraData data = camera.GetComponent<UniversalAdditionalCameraData>();
                     cameras.Add(new CameraState { Camera = camera, Mask = camera.cullingMask,
-                        Flags = camera.clearFlags, Color = camera.backgroundColor });
+                        Flags = camera.clearFlags, Color = camera.backgroundColor,
+                        HasCameraData = data != null, PostProcessing = data != null && data.renderPostProcessing });
+                    // Only a clear colour is drawn behind the map UI: skip the full-screen post-processing passes.
+                    if (data != null) data.renderPostProcessing = false;
                     camera.cullingMask = 0;
                     camera.clearFlags = CameraClearFlags.SolidColor;
                     camera.backgroundColor = BoatshipsUI.Background;
@@ -468,6 +479,11 @@ namespace Boatships
                     saved.Camera.cullingMask = saved.Mask;
                     saved.Camera.clearFlags = saved.Flags;
                     saved.Camera.backgroundColor = saved.Color;
+                    if (saved.HasCameraData)
+                    {
+                        UniversalAdditionalCameraData data = saved.Camera.GetComponent<UniversalAdditionalCameraData>();
+                        if (data != null) data.renderPostProcessing = saved.PostProcessing;
+                    }
                 }
                 cameras.Clear();
             }

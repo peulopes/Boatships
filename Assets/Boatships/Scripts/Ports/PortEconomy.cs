@@ -119,6 +119,8 @@ namespace Boatships
                     if (state.campaign == null) state.campaign = new CampaignProgress();
                     if (state.campaign.version != 1) throw new InvalidDataException("Unsupported campaign version.");
                     if (state.campaign.encounters == null) state.campaign.encounters = new List<EncounterRecord>();
+                    // Sunk encounters carry nothing the game reads again (counters and loot live elsewhere).
+                    state.campaign.encounters.RemoveAll(item => item == null || item.defeated);
                     if (state.campaign.discovered == null) state.campaign.discovered = new List<Vector2Int>();
                     if (state.missions == null) state.missions = new List<MissionContract>();
                 }
@@ -595,6 +597,20 @@ namespace Boatships
                 shipwreck = !captured };
             state.pendingLoot.Add(reward);
             if (!captured) state.wrecks.Add(reward);
+            if (Save()) return true;
+            state = JsonUtility.FromJson<SaveState>(before);
+            return false;
+        }
+
+        /// <summary>Drops records of sunk encounters so the campaign list (iterated several times a second and
+        /// written in every checkpoint) does not grow for the whole campaign. Call outside any loop over
+        /// <see cref="Campaign"/>.encounters.</summary>
+        public bool PruneDefeatedEncounters()
+        {
+            if (saveLocked || state == null || state.campaign == null || state.campaign.encounters == null) return false;
+            if (!state.campaign.encounters.Exists(item => item.defeated)) return false;
+            string before = JsonUtility.ToJson(state);
+            state.campaign.encounters.RemoveAll(item => item.defeated);
             if (Save()) return true;
             state = JsonUtility.FromJson<SaveState>(before);
             return false;

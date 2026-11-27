@@ -46,8 +46,29 @@ namespace Boatships
         private readonly Dictionary<Vector2Int, IslandSite> sites = new Dictionary<Vector2Int, IslandSite>();
         private readonly Dictionary<Vector2Int, GameObject> activeChunks = new Dictionary<Vector2Int, GameObject>();
         private readonly List<Vector2Int> stale = new List<Vector2Int>();
+        // Islands that left the streaming area stay built but hidden for a while, so sailing back and forth
+        // over a cell edge does not rebuild their terrain, collider and harbour town every time.
+        private readonly Dictionary<Vector2Int, GameObject> cachedChunks = new Dictionary<Vector2Int, GameObject>();
+        private readonly List<Vector2Int> cacheOrder = new List<Vector2Int>();
+        private const int MaxCachedChunks = 8;
+        private readonly List<Vector2Int> pendingBuilds = new List<Vector2Int>();
         private Vector2Int lastCell = new Vector2Int(int.MinValue, int.MinValue);
         private bool started;
+        private bool suspended;
+
+        /// <summary>While suspended (e.g. on the world map) no islands stream in and the loaded ones are hidden,
+        /// so their towns, forts and townsfolk stop updating.</summary>
+        public bool Suspended
+        {
+            get => suspended;
+            set
+            {
+                if (suspended == value) return;
+                suspended = value;
+                foreach (GameObject chunk in activeChunks.Values) if (chunk != null) chunk.SetActive(!value);
+                if (!value && started) UpdateLoadedChunks();
+            }
+        }
         [SerializeField] private bool campaignBiomes;
         public void EnableCampaignBiomes() => campaignBiomes = true;
 
@@ -112,7 +133,12 @@ namespace Boatships
             seed = newSeed;
             foreach (GameObject chunk in activeChunks.Values)
                 if (chunk != null) Destroy(chunk);
+            foreach (GameObject chunk in cachedChunks.Values)
+                if (chunk != null) Destroy(chunk);
             activeChunks.Clear();
+            cachedChunks.Clear();
+            cacheOrder.Clear();
+            pendingBuilds.Clear();
             sites.Clear();
             stale.Clear();
             lastCell = new Vector2Int(int.MinValue, int.MinValue);
@@ -149,43 +175,78 @@ namespace Boatships
 
         private void Update()
         {
-            if (player == null) return;
+            if (player == null || suspended) return;
             Vector2Int cell = PositionToCell(player.position);
-            if (cell == lastCell) return;
-            UpdateLoadedChunks();
+            if (cell != lastCell) UpdateLoadedChunks();
+            // Building an island (terrain, collider, harbour town) is the heaviest thing the game does;
+            // spread several of them over consecutive frames.
+            if (pendingBuilds.Count > 0)
+            {
+                Vector2Int next = pendingBuilds[0];
+                pendingBuilds.RemoveAt(0);
+                if (!activeChunks.ContainsKey(next) && InRange(next, lastCell, streamingRadius)) BuildChunk(next);
+            }
         }
+
+        private static bool InRange(Vector2Int c, Vector2Int centre, int radius) =>
+            Mathf.Abs(c.x - centre.x) <= radius && Mathf.Abs(c.y - centre.y) <= radius;
 
         private void UpdateLoadedChunks()
         {
             Vector2Int cell = player != null ? PositionToCell(player.position) : Vector2Int.zero;
             lastCell = cell;
             stale.Clear();
+            // Islands leaving the area are hidden and cached rather than destroyed: crossing back costs a SetActive.
             foreach (var entry in activeChunks)
-            {
-                Vector2Int c = entry.Key;
-                if (Mathf.Abs(c.x - cell.x) > streamingRadius ||
-                    Mathf.Abs(c.y - cell.y) > streamingRadius)
-                    stale.Add(c);
-            }
+                if (!InRange(entry.Key, cell, streamingRadius)) stale.Add(entry.Key);
             foreach (Vector2Int c in stale)
             {
                 GameObject removed = activeChunks[c];
                 activeChunks.Remove(c);
-                if (removed != null) Destroy(removed);
+                if (removed == null) continue;
+                removed.SetActive(false);
+                cachedChunks[c] = removed;
+                cacheOrder.Remove(c);
+                cacheOrder.Add(c);
             }
+            while (cacheOrder.Count > MaxCachedChunks)
+            {
+                Vector2Int oldest = cacheOrder[0];
+                cacheOrder.RemoveAt(0);
+                if (cachedChunks.TryGetValue(oldest, out GameObject evicted) && evicted != null) Destroy(evicted);
+                cachedChunks.Remove(oldest);
+            }
+            pendingBuilds.Clear();
             for (int z = cell.y - streamingRadius; z <= cell.y + streamingRadius; z++)
             for (int x = cell.x - streamingRadius; x <= cell.x + streamingRadius; x++)
             {
                 Vector2Int c = new Vector2Int(x, z);
-                if (activeChunks.ContainsKey(c) || !sites.TryGetValue(c, out IslandSite island)) continue;
-                GameObject go = new GameObject($"Island_{x}_{z}_{island.Kind}");
-                go.transform.SetParent(transform, false);
-                go.transform.position = new Vector3(island.Center.x, 0f, island.Center.y);
-                ProceduralIslandChunk chunk = go.AddComponent<ProceduralIslandChunk>();
-                chunk.Build(island, terrainResolution, seed, sand, grass, rock,
-                    bark, leaves, stone, portMarker, pirateMarker, treasureMarker);
-                activeChunks.Add(c, go);
+                if (activeChunks.ContainsKey(c) || !sites.ContainsKey(c)) continue;
+                if (cachedChunks.TryGetValue(c, out GameObject cached) && cached != null)
+                {
+                    cachedChunks.Remove(c);
+                    cacheOrder.Remove(c);
+                    cached.SetActive(!suspended);
+                    activeChunks.Add(c, cached);
+                    continue;
+                }
+                // The island the player is in is needed at once; the neighbours follow one per frame.
+                if (c == cell) BuildChunk(c);
+                else pendingBuilds.Add(c);
             }
+        }
+
+        private void BuildChunk(Vector2Int c)
+        {
+            if (!sites.TryGetValue(c, out IslandSite island)) return;
+            GameObject go = new GameObject($"Island_{c.x}_{c.y}_{island.Kind}");
+            go.transform.SetParent(transform, false);
+            go.transform.position = new Vector3(island.Center.x, 0f, island.Center.y);
+            ProceduralIslandChunk chunk = go.AddComponent<ProceduralIslandChunk>();
+            chunk.Build(island, terrainResolution, seed, sand, grass, rock,
+                bark, leaves, stone, portMarker, pirateMarker, treasureMarker);
+            if (suspended) go.SetActive(false);
+            activeChunks.Add(c, go);
         }
 
         public bool TryNearestIsland(Vector3 position, out IslandSite best)

@@ -92,6 +92,7 @@ namespace Boatships
                 }
                 else unresolved = true;
             }
+            economy.PruneDefeatedEncounters();
             if (unresolved) nextWave = Time.time + 60f;
             else if (AutoWaves && Time.time >= nextWave && !docking.IsDocked) SpawnWave();
             SynchronizeCargo();
