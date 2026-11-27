@@ -46,8 +46,33 @@ namespace Boatships
         private readonly Dictionary<Vector2Int, IslandSite> sites = new Dictionary<Vector2Int, IslandSite>();
         private readonly Dictionary<Vector2Int, GameObject> activeChunks = new Dictionary<Vector2Int, GameObject>();
         private readonly List<Vector2Int> stale = new List<Vector2Int>();
+        // Flat cell → island lookup for shore checks (much cheaper than hashing nine Vector2Int keys).
+        private IslandSite[] siteGrid = new IslandSite[0];
+        private bool[] siteGridUsed = new bool[0];
+        private int gridLower;
+        // Islands that left the streaming area stay built but hidden for a while, so sailing back and forth
+        // over a cell edge does not rebuild their terrain, collider and harbour town every time.
+        private readonly Dictionary<Vector2Int, GameObject> cachedChunks = new Dictionary<Vector2Int, GameObject>();
+        private readonly List<Vector2Int> cacheOrder = new List<Vector2Int>();
+        private const int MaxCachedChunks = 8;
+        private readonly List<Vector2Int> pendingBuilds = new List<Vector2Int>();
         private Vector2Int lastCell = new Vector2Int(int.MinValue, int.MinValue);
         private bool started;
+        private bool suspended;
+
+        /// <summary>While suspended (e.g. on the world map) no islands stream in and the loaded ones are hidden,
+        /// so their towns, forts and townsfolk stop updating.</summary>
+        public bool Suspended
+        {
+            get => suspended;
+            set
+            {
+                if (suspended == value) return;
+                suspended = value;
+                foreach (GameObject chunk in activeChunks.Values) if (chunk != null) chunk.SetActive(!value);
+                if (!value && started) UpdateLoadedChunks();
+            }
+        }
         [SerializeField] private bool campaignBiomes;
         public void EnableCampaignBiomes() => campaignBiomes = true;
 
@@ -112,7 +137,12 @@ namespace Boatships
             seed = newSeed;
             foreach (GameObject chunk in activeChunks.Values)
                 if (chunk != null) Destroy(chunk);
+            foreach (GameObject chunk in cachedChunks.Values)
+                if (chunk != null) Destroy(chunk);
             activeChunks.Clear();
+            cachedChunks.Clear();
+            cacheOrder.Clear();
+            pendingBuilds.Clear();
             sites.Clear();
             stale.Clear();
             lastCell = new Vector2Int(int.MinValue, int.MinValue);
@@ -144,48 +174,100 @@ namespace Boatships
                     Biome = campaignBiomes ? (IslandBiome)((uint)StableHash(seed + 91, x, z) % 3u) : IslandBiome.Tropical
                 });
             }
+            gridLower = lower;
+            siteGrid = new IslandSite[cellsPerAxis * cellsPerAxis];
+            siteGridUsed = new bool[siteGrid.Length];
+            foreach (IslandSite site in sites.Values)
+            {
+                int index = (site.Cell.y - lower) * cellsPerAxis + (site.Cell.x - lower);
+                siteGrid[index] = site;
+                siteGridUsed[index] = true;
+            }
             if (started) UpdateLoadedChunks();
         }
 
         private void Update()
         {
-            if (player == null) return;
+            if (player == null || suspended) return;
             Vector2Int cell = PositionToCell(player.position);
-            if (cell == lastCell) return;
-            UpdateLoadedChunks();
+            if (cell != lastCell) UpdateLoadedChunks();
+            // Building an island (terrain, collider, harbour town) is the heaviest thing the game does;
+            // spread several of them over consecutive frames.
+            if (pendingBuilds.Count > 0)
+            {
+                Vector2Int next = pendingBuilds[0];
+                pendingBuilds.RemoveAt(0);
+                if (!activeChunks.ContainsKey(next) && InRange(next, lastCell, streamingRadius)) BuildChunk(next);
+            }
         }
+
+        private static bool InRange(Vector2Int c, Vector2Int centre, int radius) =>
+            Mathf.Abs(c.x - centre.x) <= radius && Mathf.Abs(c.y - centre.y) <= radius;
 
         private void UpdateLoadedChunks()
         {
             Vector2Int cell = player != null ? PositionToCell(player.position) : Vector2Int.zero;
             lastCell = cell;
             stale.Clear();
+            // Islands leaving the area are hidden and cached rather than destroyed: crossing back costs a SetActive.
             foreach (var entry in activeChunks)
-            {
-                Vector2Int c = entry.Key;
-                if (Mathf.Abs(c.x - cell.x) > streamingRadius ||
-                    Mathf.Abs(c.y - cell.y) > streamingRadius)
-                    stale.Add(c);
-            }
+                if (!InRange(entry.Key, cell, streamingRadius)) stale.Add(entry.Key);
             foreach (Vector2Int c in stale)
             {
                 GameObject removed = activeChunks[c];
                 activeChunks.Remove(c);
-                if (removed != null) Destroy(removed);
+                if (removed == null) continue;
+                removed.SetActive(false);
+                cachedChunks[c] = removed;
+                cacheOrder.Remove(c);
+                cacheOrder.Add(c);
             }
+            while (cacheOrder.Count > MaxCachedChunks)
+            {
+                Vector2Int oldest = cacheOrder[0];
+                cacheOrder.RemoveAt(0);
+                if (cachedChunks.TryGetValue(oldest, out GameObject evicted) && evicted != null) Destroy(evicted);
+                cachedChunks.Remove(oldest);
+            }
+            pendingBuilds.Clear();
             for (int z = cell.y - streamingRadius; z <= cell.y + streamingRadius; z++)
             for (int x = cell.x - streamingRadius; x <= cell.x + streamingRadius; x++)
             {
                 Vector2Int c = new Vector2Int(x, z);
-                if (activeChunks.ContainsKey(c) || !sites.TryGetValue(c, out IslandSite island)) continue;
-                GameObject go = new GameObject($"Island_{x}_{z}_{island.Kind}");
-                go.transform.SetParent(transform, false);
-                go.transform.position = new Vector3(island.Center.x, 0f, island.Center.y);
-                ProceduralIslandChunk chunk = go.AddComponent<ProceduralIslandChunk>();
-                chunk.Build(island, terrainResolution, seed, sand, grass, rock,
-                    bark, leaves, stone, portMarker, pirateMarker, treasureMarker);
-                activeChunks.Add(c, go);
+                if (activeChunks.ContainsKey(c) || !sites.ContainsKey(c)) continue;
+                if (cachedChunks.TryGetValue(c, out GameObject cached) && cached != null)
+                {
+                    cachedChunks.Remove(c);
+                    cacheOrder.Remove(c);
+                    cached.SetActive(!suspended);
+                    activeChunks.Add(c, cached);
+                    continue;
+                }
+                // The island the player is at (e.g. just moored at its pier) is needed at once;
+                // the others follow one per frame.
+                if (c == cell || NearIsland(c)) BuildChunk(c);
+                else pendingBuilds.Add(c);
             }
+        }
+
+        private bool NearIsland(Vector2Int c)
+        {
+            if (player == null || !sites.TryGetValue(c, out IslandSite island)) return false;
+            float reach = island.Radius + 40f;
+            return (new Vector2(player.position.x, player.position.z) - island.Center).sqrMagnitude < reach * reach;
+        }
+
+        private void BuildChunk(Vector2Int c)
+        {
+            if (!sites.TryGetValue(c, out IslandSite island)) return;
+            GameObject go = new GameObject($"Island_{c.x}_{c.y}_{island.Kind}");
+            go.transform.SetParent(transform, false);
+            go.transform.position = new Vector3(island.Center.x, 0f, island.Center.y);
+            ProceduralIslandChunk chunk = go.AddComponent<ProceduralIslandChunk>();
+            chunk.Build(island, terrainResolution, seed, sand, grass, rock,
+                bark, leaves, stone, portMarker, pirateMarker, treasureMarker);
+            if (suspended) go.SetActive(false);
+            activeChunks.Add(c, go);
         }
 
         public bool TryNearestIsland(Vector3 position, out IslandSite best)
@@ -231,17 +313,36 @@ namespace Boatships
             position.x = Mathf.Clamp(position.x, -edge, edge);
             position.z = Mathf.Clamp(position.z, -edge, edge);
             Vector2 p = new Vector2(position.x, position.z);
-            foreach (IslandSite island in sites.Values)
+            if (clearance < cellSize * 0.5f && siteGrid.Length == cellsPerAxis * cellsPerAxis)
             {
-                Vector2 difference = p - island.Center;
-                float radius = island.Radius * 0.78f + clearance;
-                if (difference.sqrMagnitude >= radius * radius) continue;
-                Vector2 direction = difference.sqrMagnitude < 0.0001f ? Vector2.down : difference.normalized;
-                p = island.Center + direction * radius;
+                // An island (centre jittered by at most 11% of a cell, radius at most 32%) can only reach points in
+                // its own and the neighbouring cells, so only those nine cells need checking. Called many times a
+                // frame by map parties and escorts.
+                Vector2Int cell = PositionToCell(new Vector3(p.x, 0f, p.y));
+                for (int z = cell.y - 1 - gridLower; z <= cell.y + 1 - gridLower; z++)
+                {
+                    if (z < 0 || z >= cellsPerAxis) continue;
+                    for (int x = cell.x - 1 - gridLower; x <= cell.x + 1 - gridLower; x++)
+                    {
+                        if (x < 0 || x >= cellsPerAxis) continue;
+                        int index = z * cellsPerAxis + x;
+                        if (index < siteGridUsed.Length && siteGridUsed[index]) p = PushOut(p, siteGrid[index], clearance);
+                    }
+                }
             }
+            else foreach (IslandSite island in sites.Values) p = PushOut(p, island, clearance);
             position.x = Mathf.Clamp(p.x, -edge, edge);
             position.z = Mathf.Clamp(p.y, -edge, edge);
             return position;
+        }
+
+        private static Vector2 PushOut(Vector2 p, IslandSite island, float clearance)
+        {
+            Vector2 difference = p - island.Center;
+            float radius = island.Radius * 0.78f + clearance;
+            if (difference.sqrMagnitude >= radius * radius) return p;
+            Vector2 direction = difference.sqrMagnitude < 0.0001f ? Vector2.down : difference.normalized;
+            return island.Center + direction * radius;
         }
 
         private Vector2Int PositionToCell(Vector3 worldPosition)

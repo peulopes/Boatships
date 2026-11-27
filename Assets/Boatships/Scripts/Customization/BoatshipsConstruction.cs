@@ -96,6 +96,7 @@ namespace Boatships
             bool recovered = economy.TrySpend(fee, 0, 0, () =>
             {
                 flooding.ResetShipForDemo();
+                equipment.InstallStarterCannons(); // the recovered ship is re-armed at every port
                 docking.JumpToPortForTesting();
                 transform.position = body.position;
                 Physics.SyncTransforms();

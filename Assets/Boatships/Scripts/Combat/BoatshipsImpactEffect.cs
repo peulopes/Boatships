@@ -8,7 +8,8 @@ namespace Boatships
     public sealed class BoatshipsImpactEffect : MonoBehaviour
     {
         private static int activeEffects;
-        private Material explosionMaterial;
+        // Shared by every impact: each hit used to load the template and create (and destroy) its own material.
+        private static Material explosionMaterial;
 
         public static void Spawn(VoxelHull hull, Vector3 point, List<Vector3> fragments)
         {
@@ -22,25 +23,31 @@ namespace Boatships
             Destroy(root, 3.5f);
         }
 
-        private void Build(VoxelHull hull, Vector3 point, List<Vector3> fragments)
+        private static void CreateExplosionMaterial()
         {
             // A referenced material keeps the particle shader available in player builds too.
             Material template = Resources.Load<Material>("Boatships/CannonImpact");
             Shader shader = template != null ? template.shader : Shader.Find("Universal Render Pipeline/Particles/Unlit");
             if (shader == null) shader = Shader.Find("Particles/Standard Unlit");
-            if (shader != null)
+            if (shader == null) return;
+            explosionMaterial = template != null ? new Material(template) : new Material(shader);
+            explosionMaterial.name = "Cannon Impact Particles";
+            // Configure transparency explicitly: runtime materials start opaque.
+            if (explosionMaterial.HasProperty("_Surface")) explosionMaterial.SetFloat("_Surface", 1f);
+            if (explosionMaterial.HasProperty("_Mode")) explosionMaterial.SetFloat("_Mode", 2f);
+            explosionMaterial.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
+            explosionMaterial.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
+            explosionMaterial.SetInt("_ZWrite", 0);
+            explosionMaterial.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            explosionMaterial.EnableKeyword("_ALPHABLEND_ON");
+            explosionMaterial.renderQueue = (int)RenderQueue.Transparent;
+        }
+
+        private void Build(VoxelHull hull, Vector3 point, List<Vector3> fragments)
+        {
+            if (explosionMaterial == null) CreateExplosionMaterial();
+            if (explosionMaterial != null)
             {
-                explosionMaterial = template != null ? new Material(template) : new Material(shader);
-                explosionMaterial.name = "Cannon Impact Particles";
-                // Configure transparency explicitly: runtime materials start opaque.
-                if (explosionMaterial.HasProperty("_Surface")) explosionMaterial.SetFloat("_Surface", 1f);
-                if (explosionMaterial.HasProperty("_Mode")) explosionMaterial.SetFloat("_Mode", 2f);
-                explosionMaterial.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
-                explosionMaterial.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
-                explosionMaterial.SetInt("_ZWrite", 0);
-                explosionMaterial.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
-                explosionMaterial.EnableKeyword("_ALPHABLEND_ON");
-                explosionMaterial.renderQueue = (int)RenderQueue.Transparent;
                 ParticleSystem blast = CreateParticles("Fire and smoke", explosionMaterial, PrimitiveType.Sphere, 64, 0.15f);
                 var size = blast.sizeOverLifetime;
                 size.enabled = true;
@@ -106,10 +113,7 @@ namespace Boatships
             emitter.enabled = false;
             ParticleSystemRenderer renderer = particles.GetComponent<ParticleSystemRenderer>();
             renderer.renderMode = ParticleSystemRenderMode.Mesh;
-            GameObject template = GameObject.CreatePrimitive(shape);
-            template.SetActive(false);
-            renderer.mesh = template.GetComponent<MeshFilter>().sharedMesh;
-            Destroy(template);
+            renderer.mesh = BoatshipsPrimitives.MeshOf(shape);
             renderer.sharedMaterial = material;
             renderer.shadowCastingMode = ShadowCastingMode.Off;
             renderer.receiveShadows = false;
@@ -128,7 +132,7 @@ namespace Boatships
         private void OnDestroy()
         {
             activeEffects = Mathf.Max(0, activeEffects - 1);
-            if (explosionMaterial != null) Destroy(explosionMaterial);
+            // explosionMaterial is shared by all impacts and lives for the session.
         }
     }
 }

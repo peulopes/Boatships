@@ -60,9 +60,22 @@ namespace Boatships
             BoatshipsCrewBattle crewBattle = host.AddComponent<BoatshipsCrewBattle>();
             crewBattle.Configure(director, firstPerson, character, ocean);
             travel.BindFirstPerson(firstPerson, town, crewBattle);
+            BoatshipsInventory inventory = host.AddComponent<BoatshipsInventory>();
+            inventory.Configure(director.World, economy, character, travel, view, firstPerson, flagship.transform);
+            travel.BindInventory(inventory);
+            BoatshipsConquest conquest = host.AddComponent<BoatshipsConquest>();
+            conquest.Configure(director.World, economy, character, travel, view, firstPerson,
+                Object.FindAnyObjectByType<BoatshipsCrewManager>(), flagship.transform);
+            travel.BindConquest(conquest);
+            BoatshipsShipBattle shipBattle = host.AddComponent<BoatshipsShipBattle>();
+            shipBattle.Configure(firstPerson, director, economy, character, Object.FindAnyObjectByType<BoatshipsCrewManager>(), ocean, travel);
+            travel.BindShipBattle(shipBattle);
             BoatshipsBoarding boarding = Object.FindAnyObjectByType<BoatshipsBoarding>();
+            // Own-ship battles are fought on deck (BoatshipsShipBattle: the wheel, hand-loaded guns, full NPC crews).
+            // The sky-view alternative (BoatshipsShipCommand with crew gunnery, and BoatshipsEnemyDeckCrew standing on
+            // enemy decks) is not wired in: both would put a second crew on every enemy ship.
             if (boarding != null)
-                host.AddComponent<BoatshipsBoardingFirstPerson>().Configure(boarding, firstPerson, travel, flagship.transform);
+                host.AddComponent<BoatshipsBoardingFirstPerson>().Configure(boarding, firstPerson, travel, flagship.transform, null);
 
             // PC sailing HUD: ship status card and the crew drawer (P).
             BoatshipsSailingHud sailing = host.AddComponent<BoatshipsSailingHud>();

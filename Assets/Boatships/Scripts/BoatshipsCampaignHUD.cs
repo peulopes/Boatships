@@ -49,7 +49,10 @@ namespace Boatships
             "Campaign → Hull (H): choose a grid cell and add or remove blocks. Each addition costs 1 wood. Unsupported sections detach. Heavy equipment increases draft and reduces speed.",
             "Crew (P) opens your crew roster: cycle a sailor's duty to Fighter for boarding, Gunner for reload bonuses, Carpenter for repairs, or Sailor for handling. Treat injuries at a port.",
             "Contracts (J) form a repeating chain of naval combat, exploration, delivery, and capture. Accept and claim them while docked. Reputation unlocks Upgrades (U) and lowers faction store prices.",
-            "Weaken an enemy hull below 65%, approach within 8m, then choose Board Nearby in Fleet (L). Fighters cross to its deck and fight. Captured vessels join your fleet.",
+            "There are two ways to win at sea: sink the enemy, or take her intact. Cannon fire kills some of her crew; once her hull is below 65% or half her crew is down, come within 8m and board (Board Nearby in Fleet (L), or lead it yourself from the rail). Kill every last one of her crew and she is yours: appoint one of your sailors as her captain to add her to your company, or sell her for prize money.",
+            "Enemy crews stand on their decks for the whole fight. Leave the helm (Q) to fight them yourself: the flintlock [2] reaches 18 m across the water, and when you're within 8 m you can lead a boarding from the rail at any time and use the cutlass [1]. Their muskets fire back while you stand on deck. Every man you drop is one fewer of her crew.",
+            "Company ships with a captain fight alongside you: they engage the nearest enemy, the captain's skill sharpens their gunnery, and your shot passes over each other's decks. Press O in battle (or use the Company menu) to signal orders: Engage (fight to sink), Cripple (cease fire on enemies below 40% hull so you can board them) or Hold back (keep station). A sunk company ship takes her captain with her.",
+            "After a battle you can take survivors prisoner. How a sailor fell decides whether they live: cutlasses leave most alive, pistol shot fewer, cannon fire fewest, and some are pulled from the water when a ship sinks. Every ship has a prisoner limit (cabins and storage add room on your flagship, and each company ship adds hers). Prisoners eat rations; hand them to a harbour for a bounty, recruit the willing, or release them.",
             "Sail within 9m of floating cargo and press F to collect it. Wrecks, cargo, crew, missions, and ship layouts persist per world seed.",
             "Settings (Esc) provides three save slots, checkpoints, graphics quality, frame rate and volume. C opens your character sheet at any time."
         };
@@ -65,6 +68,9 @@ namespace Boatships
         /// <summary>Connects the world-map voyage layer (installed at scene load by BoatshipsVoyageBootstrap).</summary>
         public void BindVoyage(BoatshipsCharacter captain, BoatshipsCharacterCreation creator, BoatshipsWorldMapView mapView = null)
         { character = captain; creation = creator; view = mapView; }
+
+        /// <summary>Opens the company menu (captured ships, captains, sales). Set by the voyage layer.</summary>
+        public Action CompanyHandler { get; set; }
 
         /// <summary>True while the main menu or the campaign panel covers the screen.</summary>
         public bool BlockingOverlayOpen => open || (mainMenu != null && mainMenu.activeSelf);
@@ -245,6 +251,8 @@ namespace Boatships
             {
                 MakeButton("Board Nearby", content, () => { boarding.Begin(); if (boarding.InProgress) Close(); });
                 MakeButton("Recall Boarding Party", content, boarding.Abort);
+                if (CompanyHandler != null)
+                    MakeButton("Company — captured ships, captains, sales", content, () => { Close(); CompanyHandler(); });
                 MakeButton("Collect Nearby Cargo", content, encounters.CollectNearbyCargo);
                 MakeButton("Rescue Nearby Survivor", content, () =>
                     construction.GetComponent<BoatshipsCrewProgression>().RecoverOverboardAtPort());
@@ -269,9 +277,10 @@ namespace Boatships
                 }
                 MakeButton("Quality — " + new[] { "Low", "Medium", "High" }[presentation.Quality], content,
                     () => { presentation.CycleQuality(); BuildPage(); });
-                MakeButton("Frame rate — " + (presentation.FrameRate > 0 ? presentation.FrameRate + " FPS" : "Unlimited"), content,
+                MakeButton("Frame rate — " + (presentation.FrameRate > 0 ? presentation.FrameRate + " FPS" : "Display (V-Sync)"), content,
                     () => { presentation.CycleFrameRate(); BuildPage(); });
                 MakeSlider("Audio Volume", 0f, 1f, presentation.Volume, false, presentation.SetVolume);
+                MakeSlider("Music Volume", 0f, 1f, BoatshipsAudio.MusicVolume, false, value => BoatshipsAudio.MusicVolume = value);
             }
             else
             {
@@ -324,8 +333,10 @@ namespace Boatships
             else if (page == 1)
             {
                 encounters.NearestEnemy(out EncounterRecord nearest, out float distance);
-                detail.text = "FLEET — " + p.captures + " captured, " + p.victories + " victories\n" +
-                    (nearest != null ? nearest.kind + " Tier " + nearest.tier + " — " + distance.ToString("0") + "m\n" : "No nearby enemy\n") +
+                detail.text = "FLEET — " + p.captures + " captured, " + p.victories + " victories, " +
+                    economy.CompanySize + " in your company, prisoners " + economy.Prisoners.Count + "/" + economy.PrisonerCapacity + "\n" +
+                    (nearest != null ? nearest.kind + " Tier " + nearest.tier + " — " + distance.ToString("0") + "m, crew " +
+                        nearest.crew + "/" + nearest.crewMax + "\n" : "No nearby enemy\n") +
                     boarding.Status + "\n" + encounters.Status;
             }
             else if (page == 2) detail.text = journal.ContractText + "\n" + journal.Status;

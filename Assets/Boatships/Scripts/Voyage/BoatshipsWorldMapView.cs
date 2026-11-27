@@ -26,6 +26,7 @@ namespace Boatships
         private const int TextureSize = 512;
 
         private BoatshipsTravelController travel;
+        private float nextLocalHud;
         private ArchipelagoWorld world;
         private BoatshipsCampaignHUD hud;
         private Canvas mapCanvas;
@@ -281,6 +282,11 @@ namespace Boatships
 
         // ───────────────────────────── Menus ─────────────────────────────
 
+        /// <summary>Colour of a port's map marker when it is not the default (e.g. the player owns it).</summary>
+        public static Func<Vector2Int, Color?> PortColorOverride;
+        /// <summary>Redraws the island markers (after a port changes hands).</summary>
+        public void RefreshIslandMarkers() => markerDiscoveries = -1;
+
         public void ShowMenu(string title, string body, List<MapMenuOption> options)
         {
             ClearSelection();
@@ -290,11 +296,13 @@ namespace Boatships
             foreach (MapMenuOption option in options)
             {
                 MapMenuOption chosen = option;
+                // Long lists (markets, inventories) use compact rows so the card still fits the screen.
+                bool compact = options.Count > 7;
                 Button button = BoatshipsUI.Button(option.Label, menuOptions, () =>
                 {
                     menuRoot.SetActive(false);
                     chosen.Action?.Invoke();
-                }, 62f, 22);
+                }, compact ? 42f : 62f, compact ? 19 : 22);
                 button.interactable = option.Enabled;
             }
             menuRoot.SetActive(true);
@@ -312,7 +320,12 @@ namespace Boatships
             localCanvas.enabled = !onMap && !blocked && travel.Live && !travel.FirstPersonActive;
             menuCanvas.enabled = !blocked;
             HandleHotkeys(onMap, blocked);
-            if (!onMap) { UpdateLocalHud(); return; }
+            if (!onMap)
+            {
+                // Text-only readout: a few refreshes a second is plenty and avoids per-frame string building.
+                if (Time.unscaledTime >= nextLocalHud) { nextLocalHud = Time.unscaledTime + 0.1f; UpdateLocalHud(); }
+                return;
+            }
             if (blocked) return;
             if (textureSeed != world.Seed && world.IslandCount > 0) GenerateTerrain();
             if (textureSeed != world.Seed) return;
@@ -558,6 +571,9 @@ namespace Boatships
                     {
                         Color color = site.Kind == IslandKind.PortSite ? new Color(1f, 0.8f, 0.25f) :
                             site.Kind == IslandKind.PirateBaseSite ? new Color(0.9f, 0.15f, 0.12f) : new Color(1f, 1f, 0.55f);
+                        // Conquered ports fly the player's colours on the map.
+                        Color? owner = PortColorOverride != null ? PortColorOverride(site.Cell) : null;
+                        if (owner.HasValue) color = owner.Value;
                         Image icon = MarkerImage("Icon", root, null, color);
                         icon.rectTransform.sizeDelta = new Vector2(16f, 16f);
                         icon.rectTransform.localRotation = Quaternion.Euler(0f, 0f, 45f);

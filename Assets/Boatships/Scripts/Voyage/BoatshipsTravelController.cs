@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
+using UnityEngine.Rendering.Universal;
 
 namespace Boatships
 {
@@ -24,6 +25,9 @@ namespace Boatships
         public float speed = 16f;
         public float cooldown;
         public bool employer;
+        /// <summary>A war fleet sent to besiege one of the player's cities (it parks there once it arrives).</summary>
+        public bool siegeFleet;
+        public Vector2Int siegeTarget;
         [NonSerialized] public bool chasing;
     }
 
@@ -90,7 +94,7 @@ namespace Boatships
     /// <summary>Owns the travel loop: world-map movement, AI parties, jobs aboard AI ships, encounters,
     /// and the transitions into the local 3D scene (harbor, island coast, battle) and back.</summary>
     [DefaultExecutionOrder(900)]
-    public sealed class BoatshipsTravelController : MonoBehaviour
+    public sealed partial class BoatshipsTravelController : MonoBehaviour
     {
         public const float HoursPerSecond = 1.2f;
         public const float BaseSpeed = 20f;
@@ -125,6 +129,7 @@ namespace Boatships
         private readonly List<ArchipelagoWorld.IslandSite> ports = new List<ArchipelagoWorld.IslandSite>();
         private readonly List<ArchipelagoWorld.IslandSite> islands = new List<ArchipelagoWorld.IslandSite>();
         private readonly List<string> battleIds = new List<string>();
+        private readonly List<string> pendingPrizes = new List<string>();
         private string battlePartyId;
         private bool battleWon;
         private bool raidBattle;
@@ -148,6 +153,8 @@ namespace Boatships
             public int Mask;
             public CameraClearFlags Flags;
             public Color Color;
+            public bool PostProcessing;
+            public bool HasCameraData;
         }
 
         public TravelMode Mode { get; private set; } = TravelMode.Map;
@@ -187,12 +194,113 @@ namespace Boatships
             world = map; economy = account; docking = port; director = encounters; saves = checkpoints;
             character = captain; hud = campaignHud; ship = flagship; movement = controller; weapons = guns;
             flooding = flood; ocean = waves;
+            if (director != null) director.PrizeTaken += OnPrizeTaken;
+            if (director != null) director.CompanyShipLost += Notify;
+            if (hud != null) hud.CompanyHandler = () => CompanyMenu(null);
         }
 
         public void BindView(BoatshipsWorldMapView mapView) => view = mapView;
 
         public void BindFirstPerson(BoatshipsFirstPerson firstPerson, BoatshipsTown portTown, BoatshipsCrewBattle crewFight)
         { fps = firstPerson; town = portTown; crewBattle = crewFight; }
+
+        public void BindInventory(BoatshipsInventory items) => inventory = items;
+        public void BindConquest(BoatshipsConquest wars) => conquest = wars;
+        private BoatshipsConquest conquest;
+        private Action portBattleWon;
+        public TravelMode CurrentMode => Mode;
+        public bool HasParty(string id) => FindParty(id) != null;
+        public void RemoveParty(string id) { MapParty party = FindParty(id); if (party != null) state.parties.Remove(party); }
+        /// <summary>Leaves a first-person town visit or assault for the world map.</summary>
+        public void LeaveTown() { if (Mode == TravelMode.Town) ReturnToMap(false); }
+        public float Hours => state != null ? state.hours : 0f;
+
+        /// <summary>A sea battle off a port's harbour (bombarding its fort, or breaking a siege of it).</summary>
+        public bool BeginPortBattle(ArchipelagoWorld.IslandSite site, IList<EncounterKind> kinds, int tier, Action won)
+        {
+            if (!Captain || !Live) return false;
+            Vector2 mooring = BoatshipsTown.MooringPoint(site);
+            Vector2 outward = (mooring - site.Center).sqrMagnitude > 0.01f ? (mooring - site.Center).normalized : Vector2.down;
+            PlaceShip(KeepOnWater(mooring + outward * 24f), site.Center);
+            EnterLocal(TravelMode.Battle, site, true);
+            battleIds.AddRange(director.SpawnBattle(kinds, Mathf.Clamp(tier, 1, 5), 26f));
+            portBattleWon = won;
+            Mode = TravelMode.Battle;
+            return true;
+        }
+
+        /// <summary>Lands the player at a town's pier for a first-person fight through its streets.
+        /// Returns the town (its plaza is the objective), or null if it could not be entered.</summary>
+        public BoatshipsTown BeginTownAssault(ArchipelagoWorld.IslandSite site, Action retreat)
+        {
+            if (fps == null || town == null || !Captain) return null;
+            if (docking.IsDocked) docking.Undock();
+            BoatshipsTown harbour = BoatshipsTown.For(site.Cell);
+            Vector2 mooring = harbour != null ? harbour.Mooring : BoatshipsTown.MooringPoint(site);
+            PlaceShip(KeepOnWater(mooring), site.Center);
+            EnterLocal(TravelMode.Town, site, true);
+            if (movement != null) movement.enabled = false;
+            if (weapons != null) weapons.enabled = false;
+            UpdateFlagshipVisibility();
+            townSite = site;
+            if (harbour == null) harbour = BoatshipsTown.For(site.Cell);
+            Vector3 spawn;
+            float facing;
+            if (harbour == null)
+            {
+                harbour = town;
+                town.Build(site, world.Seed, new Vector3(mooring.x, 0f, mooring.y), null, out spawn, out facing);
+            }
+            else { spawn = harbour.Spawn; facing = harbour.Facing; }
+            activeTown = harbour;
+            harbour.Handler = null;
+            fps.BeginGround(spawn, facing);
+            fps.CombatMode = true;
+            fps.SetExit("Sound the retreat", retreat);
+            return harbour;
+        }
+
+        /// <summary>Sends a war fleet of a faction to besiege a city. Returns its party id.</summary>
+        public string SpawnSiegeFleet(MapFaction faction, Vector2Int target, int tier)
+        {
+            if (state == null || !world.TryGetIsland(target, out ArchipelagoWorld.IslandSite city)) return null;
+            ArchipelagoWorld.IslandSite origin = city;
+            float best = float.MaxValue;
+            int portFaction = BoatshipsConquest.PortFactionOf(faction);
+            foreach (ArchipelagoWorld.IslandSite port in ports)
+            {
+                if (port.Cell == target || BoatshipsFactions.OfPort(port.Cell) != portFaction || (conquest != null && conquest.Owns(port.Cell))) continue;
+                float d = (port.Center - city.Center).sqrMagnitude;
+                if (d < best) { best = d; origin = port; }
+            }
+            Vector2 start = Coast(origin, city.Center, 10f);
+            if (origin.Cell == city.Cell) start = Coast(city, city.Center + Vector2.up * 200f, 120f);
+            var party = new MapParty
+            {
+                id = "party_" + state.serial++, name = BoatshipsNames.Ship(random), faction = faction,
+                tier = Mathf.Clamp(tier, 2, 5), position = start, speed = SpeedOf(faction, tier) * 0.9f,
+                destination = target, siegeFleet = true, siegeTarget = target
+            };
+            state.parties.Add(party);
+            return party.id;
+        }
+
+        /// <summary>The ships a party fields in battle.</summary>
+        public List<EncounterKind> FleetOf(MapFaction faction, int tier)
+        {
+            var kinds = new List<EncounterKind>();
+            if (faction == MapFaction.Merchant) { kinds.Add(EncounterKind.Brig); if (tier >= 3) kinds.Add(EncounterKind.Brig); }
+            else if (faction == MapFaction.Navy) { kinds.Add(EncounterKind.Patrol); if (tier >= 3) kinds.Add(EncounterKind.Patrol); }
+            else { kinds.Add(tier <= 2 ? EncounterKind.Raider : EncounterKind.Brig); if (tier >= 3) kinds.Add(EncounterKind.Raider); }
+            if (tier >= 5) kinds.Add(EncounterKind.Patrol);
+            return kinds;
+        }
+        private BoatshipsInventory inventory;
+        public BoatshipsInventory Inventory => inventory;
+
+        /// <summary>Sea battles of the player's own ship are fought in first person on deck.</summary>
+        public void BindShipBattle(BoatshipsShipBattle battle) => shipBattle = battle;
+        private BoatshipsShipBattle shipBattle;
 
         public bool FirstPersonActive => fps != null && fps.Active;
 
@@ -229,6 +337,7 @@ namespace Boatships
 
         private void ExitFirstPerson()
         {
+            if (shipBattle != null && shipBattle.Active) shipBattle.End();
             if (crewBattle != null && crewBattle.Active) return;
             if (activeTown != null)
             {
@@ -258,6 +367,8 @@ namespace Boatships
             }
             if (loadedSeed != world.Seed) Load();
             if (state == null) return;
+            // The company fights only in the captain's own battles (not on the map, nor aboard an employer's ship).
+            director.CompanyMayEngage = Captain && (Mode == TravelMode.Battle || Mode == TravelMode.Island);
 
             if (!staleEncountersCleared && director.IsReady)
             {
@@ -325,7 +436,27 @@ namespace Boatships
                 Mode = TravelMode.Port;
                 return;
             }
+            if (Mode == TravelMode.Battle && shipBattle != null && fps != null && battleIds.Count > 0)
+            {
+                if (shipBattle.Active) shipBattle.SyncEnemies(battleIds);
+                else if (!shipBattle.Abandoned && !fps.Active && (flooding == null || !flooding.IsSinking) && ship != null)
+                    shipBattle.Begin(ship.GetComponent<ShipCombatTarget>(), movement, weapons, battleIds);
+            }
+            HandleCompanyOrdersKey();
             if (!battleWon && battleIds.Count > 0 && director.RemainingHostiles(battleIds) == 0) WinBattle();
+            if (pendingPrizes.Count > 0 && !view.MenuOpen && !OverlayOpen && !FirstPersonActive &&
+                (battleIds.Count == 0 || director.RemainingHostiles(battleIds) == 0))
+            {
+                string id = pendingPrizes[0];
+                pendingPrizes.RemoveAt(0);
+                PrizeMenu(id);
+            }
+            // Prizes first (a new company ship adds room in her hold), then the survivors.
+            else if (battleWon && !prisonersOffered && pendingPrizes.Count == 0 && !view.MenuOpen && !OverlayOpen && !FirstPersonActive)
+            {
+                prisonersOffered = true;
+                SurvivorsMenu();
+            }
         }
 
         private void Simulate(float deltaTime)
@@ -448,13 +579,21 @@ namespace Boatships
             presentationApplied = true;
             mapPresentation = map;
             if (director != null) director.Suspended = map;
+            // On the world map the 3D scene is not shown: stop streaming islands (and their towns, forts and
+            // townsfolk) and stop deforming the ocean mesh. Ship buoyancy still samples the wave function.
+            if (world != null) world.Suspended = map;
+            if (ocean != null) ocean.enabled = !map;
             if (map)
             {
                 cameras.Clear();
                 foreach (Camera camera in Camera.allCameras)
                 {
+                    UniversalAdditionalCameraData data = camera.GetComponent<UniversalAdditionalCameraData>();
                     cameras.Add(new CameraState { Camera = camera, Mask = camera.cullingMask,
-                        Flags = camera.clearFlags, Color = camera.backgroundColor });
+                        Flags = camera.clearFlags, Color = camera.backgroundColor,
+                        HasCameraData = data != null, PostProcessing = data != null && data.renderPostProcessing });
+                    // Only a clear colour is drawn behind the map UI: skip the full-screen post-processing passes.
+                    if (data != null) data.renderPostProcessing = false;
                     camera.cullingMask = 0;
                     camera.clearFlags = CameraClearFlags.SolidColor;
                     camera.backgroundColor = BoatshipsUI.Background;
@@ -468,6 +607,11 @@ namespace Boatships
                     saved.Camera.cullingMask = saved.Mask;
                     saved.Camera.clearFlags = saved.Flags;
                     saved.Camera.backgroundColor = saved.Color;
+                    if (saved.HasCameraData)
+                    {
+                        UniversalAdditionalCameraData data = saved.Camera.GetComponent<UniversalAdditionalCameraData>();
+                        if (data != null) data.renderPostProcessing = saved.PostProcessing;
+                    }
                 }
                 cameras.Clear();
             }
@@ -508,7 +652,8 @@ namespace Boatships
         {
             get
             {
-                float speed = BaseSpeed * character.MapSpeedMultiplier * (1f + economy.Campaign.sailLevel * 0.1f);
+                float speed = BaseSpeed * character.MapSpeedMultiplier * (1f + economy.Campaign.sailLevel * 0.1f) *
+                    (inventory != null && inventory.Ready ? inventory.SpeedFactor : 1f);
                 return state.starving ? speed * 0.6f : speed;
             }
         }
@@ -739,6 +884,7 @@ namespace Boatships
             if (OnJob) return state.job.employer == MapFaction.Pirate ?
                 party.faction == MapFaction.Navy : party.faction == MapFaction.Pirate;
             if (!character.OwnsShip) return false;
+            if (conquest != null && conquest.AtWarWith(party.faction)) return true;
             return party.faction == MapFaction.Pirate ||
                 (party.faction == MapFaction.Navy && economy.Campaign.navyReputation <= -20);
         }
@@ -766,6 +912,12 @@ namespace Boatships
                     goal = destination.Center;
                     if (Vector2.Distance(party.position, destination.Center) <= destination.Radius * 0.78f + ArrivalMargin)
                     {
+                        if (party.siegeFleet)
+                        {
+                            // Blockading one of the player's cities: stay put and report in.
+                            if (conquest != null) conquest.OnSiegeFleetArrived(party);
+                            continue;
+                        }
                         if (party.employer) { CompleteJob(party, destination); return; }
                         Retarget(party);
                         continue;
@@ -812,7 +964,9 @@ namespace Boatships
         private void DailyUpkeep()
         {
             if (!Captain) { state.starving = false; return; }
-            int need = 1 + economy.Crew.Count / 4;
+            // Prisoners are kept on short rations.
+            int need = 1 + economy.Crew.Count / 4 + (economy.Prisoners.Count + 5) / 6;
+            EnforcePrisonerCapacity("had no room below deck and were put over the side in a longboat");
             bool fed = economy.ConsumeRations(need);
             if (!fed && !state.starving) Notify("Your crew is out of rations! The ship slows. Buy rations at a port store.");
             state.starving = !fed;
@@ -830,10 +984,12 @@ namespace Boatships
 
         private void TownMenu(ArchipelagoWorld.IslandSite site, string prefix)
         {
+            if (conquest != null && conquest.OverrideTownMenu(site, prefix, () => TownMenu(site, null))) return;
             int faction = BoatshipsFactions.OfPort(site.Cell);
             string body = (string.IsNullOrEmpty(prefix) ? "" : prefix + "\n\n") +
+                (conquest != null && conquest.Owns(site.Cell) ? "Your port, flying your colours (formerly " + BoatshipsFactions.Name(faction) + ").\n" :
                 "A " + BoatshipsFactions.Name(faction) + " port. Your standing here: " +
-                BoatshipsFactions.Reputation(economy.Campaign, faction) + ".\n" +
+                BoatshipsFactions.Reputation(economy.Campaign, faction) + ".\n") +
                 "Gold " + economy.Gold + "   Rations " + economy.Rations + "   Crew " + economy.Crew.Count + "\n" +
                 (character.OwnsShip ? "Your sloop is moored in the harbor." : "You have no ship of your own.");
             var options = new List<MapMenuOption>();
@@ -849,7 +1005,19 @@ namespace Boatships
                 options.Add(new MapMenuOption("Shipwright: buy a used sloop (" + price + " gold)",
                     () => BuyShip(site), economy.Gold >= price));
             }
+            if (inventory != null && inventory.Ready)
+                options.Add(new MapMenuOption("Market and armourer (trade goods, weapons, armour)", () => StoreMenu(site)));
+            int taken = economy.CapturedShips().Count;
+            if (taken > 0)
+                options.Add(new MapMenuOption("Your company (" + taken + " ship" + (taken == 1 ? "" : "s") + "): captains and sales",
+                    () => CompanyMenu(() => TownMenu(site, null))));
+            if (economy.Prisoners.Count > 0)
+                options.Add(new MapMenuOption("Prisoners (" + economy.Prisoners.Count + "): hand over for bounty, recruit or release",
+                    () => PrisonersMenu(true, () => TownMenu(site, null))));
+            if (conquest != null) conquest.AddTownOptions(site, options, () => TownMenu(site, null));
             options.Add(new MapMenuOption("Character", () => CharacterSheet(() => TownMenu(site, null))));
+            if (inventory != null && inventory.Ready)
+                options.Add(new MapMenuOption("Inventory and ship's hold", () => inventory.InventoryMenu(() => TownMenu(site, null))));
             options.Add(new MapMenuOption("Leave town", null));
             view.ShowMenu(BoatshipsNames.Island(site), body, options);
         }
@@ -1062,6 +1230,8 @@ namespace Boatships
                 return;
             }
             if (flooding != null) flooding.ResetShipForDemo();
+            ShipCustomization fitting = ship != null ? ship.GetComponent<ShipCustomization>() : null;
+            if (fitting != null) fitting.InstallStarterCannons(); // a new sloop comes with all four guns
             character.SetOwnsShip(true);
             character.ApplyShipColors();
             Save();
@@ -1342,6 +1512,11 @@ namespace Boatships
                 options.Add(new MapMenuOption("Buy " + goods[i] + " — " + price + " gold",
                     () => { economy.Buy(slot); StoreMenu(site); }, economy.Gold >= price));
             }
+            if (inventory != null && inventory.Ready)
+            {
+                options.Add(new MapMenuOption("Market: trade goods", () => inventory.MarketMenu(site, () => StoreMenu(site))));
+                options.Add(new MapMenuOption("Armourer: weapons, armour, bandages", () => inventory.ArmourerMenu(site, () => StoreMenu(site))));
+            }
             options.Add(new MapMenuOption("Leave the store", null));
             view.ShowMenu("General Store", economy.LastMessage + "\n\nGold " + economy.Gold + "   Wood " + economy.Wood +
                 "   Iron " + economy.Iron + "   Rations " + economy.Rations + "   Spare cannons " + economy.SpareCannons, options);
@@ -1364,6 +1539,9 @@ namespace Boatships
                     () => { economy.RepairShip(docking.Hull, docking.Flooding); ShipwrightMenu(site, economy.LastMessage); },
                     gold > 0 && economy.Gold >= gold && economy.Wood >= wood));
                 options.Add(new MapMenuOption("Open the shipyard (build and refit your ship)", () => EnterPort(site)));
+                int taken = economy.CapturedShips().Count;
+                options.Add(new MapMenuOption(taken > 0 ? "Your company's ships — appoint captains or sell (" + taken + ")" :
+                    "Sell a ship (you have no captured ships)", () => CompanyMenu(() => ShipwrightMenu(site, null)), taken > 0));
             }
             options.Add(new MapMenuOption("Leave", null));
             view.ShowMenu("Shipwright", body, options);
@@ -1375,6 +1553,9 @@ namespace Boatships
             if (character.OwnsShip)
             {
                 options.Add(new MapMenuOption("Board your ship and set sail", () => ReturnToMap(false)));
+                if (economy.Prisoners.Count > 0)
+                    options.Add(new MapMenuOption("Hand over or deal with your prisoners (" + economy.Prisoners.Count + ")",
+                        () => PrisonersMenu(true, () => HarborMenu(site))));
                 options.Add(new MapMenuOption("Harbor office (contracts, missions, full harbor services)", () => EnterPort(site)));
             }
             else
@@ -1391,9 +1572,10 @@ namespace Boatships
 
         private void EnterLocal(TravelMode mode, ArchipelagoWorld.IslandSite site, bool hasSite)
         {
+            if (shipBattle != null) { shipBattle.End(); shipBattle.ResetAbandoned(); }
             Mode = mode;
             localIsland = site; hasLocalIsland = hasSite;
-            battleIds.Clear(); battlePartyId = null; battleWon = false; raidBattle = false;
+            battleIds.Clear(); battlePartyId = null; battleWon = false; raidBattle = false; prisonersOffered = false;
             SetMapPresentation(false);
             ShipCustomization shipyard = ship != null ? ship.GetComponent<ShipCustomization>() : null;
             if (mode != TravelMode.Port && shipyard != null && shipyard.InShipyard) shipyard.SetShipyard(false);
@@ -1457,6 +1639,9 @@ namespace Boatships
         private void WinBattle()
         {
             battleWon = true;
+            Action won = portBattleWon;
+            portBattleWon = null;
+            won?.Invoke();
             MapParty party = FindParty(battlePartyId);
             if (party != null)
             {
@@ -1504,7 +1689,13 @@ namespace Boatships
                 if (Mode == TravelMode.Battle)
                 {
                     int remaining = battleIds.Count > 0 ? director.RemainingHostiles(battleIds) : 0;
-                    return remaining > 0 ? "Battle — " + remaining + " enemy vessel(s) remaining" : "Battle won — " + place;
+                    if (remaining == 0) return "Battle won — " + place;
+                    director.NearestEnemy(out EncounterRecord nearest, out _);
+                    int company = economy.CompanySize;
+                    return "Battle — " + remaining + " enemy vessel(s) remaining" +
+                        (nearest != null && nearest.crewMax > 0 ? "   Nearest crew " + nearest.crew + "/" + nearest.crewMax : "") +
+                        (company > 0 ? "   Company " + director.CompanyEngaged + "/" + company + " engaged — orders: " +
+                            director.Orders + " [O]" : "");
                 }
                 return place;
             }
@@ -1523,7 +1714,15 @@ namespace Boatships
                 party.position = KeepOnWater(party.position + (away.sqrMagnitude > 0.01f ? away.normalized : Vector2.up) * 15f);
                 Notify("You escaped from " + Describe(party) + ".");
             }
-            battleIds.Clear(); battlePartyId = null; battleWon = false; raidBattle = false;
+            // Survivors nobody went back for are lost once you sail away.
+            foreach (string id in battleIds) economy.LeaveSurvivors(id);
+            battleIds.Clear(); battlePartyId = null; battleWon = false; raidBattle = false; prisonersOffered = false;
+            portBattleWon = null;
+            if (pendingPrizes.Count > 0)
+            {
+                pendingPrizes.Clear();
+                Notify("Your prizes follow under prize crews. Give them orders from Company (Fleet, L) or at any port.");
+            }
             if (ship != null) state.position = KeepOnWater(new Vector2(ship.position.x, ship.position.z));
             Vector3 forward = ship != null ? ship.forward : Vector3.forward;
             if (new Vector2(forward.x, forward.z).sqrMagnitude > 0.01f) state.heading = new Vector2(forward.x, forward.z).normalized;
@@ -1575,6 +1774,143 @@ namespace Boatships
             }
         }
 
-        private void OnDestroy() { if (presentationApplied && mapPresentation) SetMapPresentation(false); }
+        // ───────────────────────────── Prizes and the company ─────────────────────────────
+
+        private void OnPrizeTaken(EncounterRecord record)
+        {
+            if (record == null || pendingPrizes.Contains(record.id)) return;
+            pendingPrizes.Add(record.id);
+            string experience = character != null ? character.AddExperience(CharacterSkill.Leadership, 15) : null;
+            bool fighting = battleIds.Count > 0 && director.RemainingHostiles(battleIds) > 0;
+            Notify("Prize taken! Not one of her crew is left standing — " + record.DisplayName + " is yours." +
+                (fighting ? " Give her orders once the battle is over." : "") + (experience != null ? " " + experience : ""));
+        }
+
+        private EncounterRecord FindCaptured(string id) =>
+            economy.Campaign.encounters.Find(item => item.id == id && item.captured && !item.sold);
+
+        private static string Percent(float fraction) => Mathf.RoundToInt(Mathf.Clamp01(fraction) * 100f) + "%";
+
+        /// <summary>Orders for a freshly taken ship: put a captain aboard, sell her, or decide later.</summary>
+        private void PrizeMenu(string id)
+        {
+            EncounterRecord prize = FindCaptured(id);
+            if (prize == null) return;
+            int value = prize.PrizeValue;
+            string body = "The last of her crew has fallen and " + prize.DisplayName + " is yours, still afloat with " +
+                Percent(prize.hullFraction) + " of her hull intact.\n\n" +
+                "Appoint one of your sailors as her captain and she sails in your company, or sell her to a prize agent for " +
+                value + " gold.\n\nGold " + economy.Gold + "   Company ships " + economy.CompanySize;
+            view.ShowMenu("Prize Taken", body, new List<MapMenuOption>
+            {
+                new MapMenuOption("Take her into your company — appoint a captain", () => CaptainMenu(id, () => PrizeMenu(id)),
+                    HasCaptainCandidates()),
+                new MapMenuOption("Sell her — " + value + " gold", () => SellShip(id, null)),
+                new MapMenuOption("Decide later (a prize crew sails her in your wake)", null)
+            });
+        }
+
+        private bool HasCaptainCandidates()
+        {
+            foreach (PortEconomy.CrewMember member in economy.Crew) if (economy.CanCaptain(member)) return true;
+            return false;
+        }
+
+        /// <summary>Choose which sailor leaves the flagship's crew to command the ship.</summary>
+        private void CaptainMenu(string id, Action back)
+        {
+            EncounterRecord vessel = FindCaptured(id);
+            if (vessel == null) return;
+            var candidates = new List<PortEconomy.CrewMember>();
+            foreach (PortEconomy.CrewMember member in economy.Crew) if (economy.CanCaptain(member)) candidates.Add(member);
+            candidates.Sort((a, b) => b.skill.CompareTo(a.skill));
+            var options = new List<MapMenuOption>();
+            for (int i = 0; i < candidates.Count && i < 8; i++)
+            {
+                PortEconomy.CrewMember member = candidates[i];
+                string key = member.offerKey;
+                options.Add(new MapMenuOption(member.displayName + ", " + member.role + " (skill " + member.skill + ")", () =>
+                {
+                    bool appointed = economy.AppointCaptain(id, key);
+                    Notify(economy.LastMessage);
+                    if (!appointed) CaptainMenu(id, back);
+                }));
+            }
+            options.Add(new MapMenuOption("Back", back));
+            string current = vessel.InCompany ? "She is commanded by Captain " + vessel.captainName + ", who will rejoin your crew if replaced.\n\n" : "";
+            view.ShowMenu("Appoint a Captain", current + "Who will command " + vessel.DisplayName + "? The sailor you choose leaves " +
+                "your flagship's crew to take her helm. Your crew: " + economy.Crew.Count + ".", options);
+        }
+
+        private void SellShip(string id, Action after)
+        {
+            if (director.SellCaptured(id, out int price))
+            {
+                Notify(economy.LastMessage);
+                EnforcePrisonerCapacity("held aboard her went with the sale");
+                after?.Invoke();
+            }
+            else Notify("The sale fell through. " + economy.LastMessage);
+        }
+
+        /// <summary>Every ship taken in battle: captains, condition and value, with orders for each.</summary>
+        public void CompanyMenu(Action back)
+        {
+            if (!Live) return;
+            List<EncounterRecord> ships = economy.CapturedShips();
+            var body = new System.Text.StringBuilder();
+            body.Append("Your flagship and ").Append(ships.Count == 0 ? "no other ships." : ships.Count + " more:");
+            foreach (EncounterRecord vessel in ships)
+            {
+                body.Append("\n• ").Append(Capitalize(vessel.DisplayName)).Append(" — ")
+                    .Append(vessel.InCompany ? "Captain " + vessel.captainName + " (skill " + vessel.captainSkill + ")" : "prize crew, awaiting orders")
+                    .Append(", hull ").Append(Percent(vessel.hullFraction)).Append(", worth ").Append(vessel.PrizeValue).Append(" gold");
+            }
+            if (ships.Count == 0) body.Append("\n\nTake an enemy intact by killing her entire crew in a boarding action, then give her a captain.");
+            var options = new List<MapMenuOption>();
+            foreach (EncounterRecord vessel in ships)
+            {
+                string id = vessel.id;
+                options.Add(new MapMenuOption("Orders for " + vessel.DisplayName, () => ShipOrdersMenu(id, back)));
+            }
+            body.Append("\n\nBattle orders: ").Append(BoatshipsEncounterDirector.DescribeOrders(director.Orders))
+                .Append(". Ships with a captain fight alongside you; prizes without one only follow.");
+            body.Append("\n\nPrisoners ").Append(economy.Prisoners.Count).Append("/").Append(PrisonerCapacityNow());
+            options.Add(new MapMenuOption("Change battle orders (now: " + director.Orders + ")", () =>
+            {
+                CycleCompanyOrders();
+                CompanyMenu(back);
+            }));
+            options.Add(new MapMenuOption("Prisoners (" + economy.Prisoners.Count + ")", () => PrisonersMenu(false, () => CompanyMenu(back)),
+                economy.Prisoners.Count > 0));
+            options.Add(new MapMenuOption(back != null ? "Back" : "Close", back));
+            view.ShowMenu("Your Company", body.ToString(), options);
+        }
+
+        private void ShipOrdersMenu(string id, Action back)
+        {
+            EncounterRecord vessel = FindCaptured(id);
+            if (vessel == null) { CompanyMenu(back); return; }
+            Action again = () => ShipOrdersMenu(id, back);
+            int value = vessel.PrizeValue;
+            view.ShowMenu(Capitalize(vessel.DisplayName),
+                (vessel.InCompany ? "Commanded by Captain " + vessel.captainName + ", " + vessel.captainRole + " (skill " + vessel.captainSkill + ")."
+                    : "Sailed by a prize crew. She needs a captain to join your company.") +
+                "\nHull " + Percent(vessel.hullFraction) + ". A buyer would pay " + value + " gold.",
+                new List<MapMenuOption>
+                {
+                    new MapMenuOption(vessel.InCompany ? "Replace her captain" : "Appoint a captain", () => CaptainMenu(id, again),
+                        HasCaptainCandidates()),
+                    new MapMenuOption("Sell her — " + value + " gold" + (vessel.InCompany ? " (her captain rejoins your crew)" : ""),
+                        () => SellShip(id, () => CompanyMenu(back))),
+                    new MapMenuOption("Back", () => CompanyMenu(back))
+                });
+        }
+
+        private void OnDestroy()
+        {
+            if (director != null) { director.PrizeTaken -= OnPrizeTaken; director.CompanyShipLost -= Notify; }
+            if (presentationApplied && mapPresentation) SetMapPresentation(false);
+        }
     }
 }

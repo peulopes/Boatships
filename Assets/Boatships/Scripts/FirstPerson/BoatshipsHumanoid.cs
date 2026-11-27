@@ -47,9 +47,8 @@ namespace Boatships
 
         public static GameObject Part(PrimitiveType type, string name, Transform parent, Vector3 position, Vector3 scale, Color color)
         {
-            GameObject part = GameObject.CreatePrimitive(type);
+            GameObject part = BoatshipsPrimitives.Create(type);
             part.name = name;
-            Object.Destroy(part.GetComponent<Collider>());
             part.transform.SetParent(parent, false);
             part.transform.localPosition = position;
             part.transform.localScale = scale;

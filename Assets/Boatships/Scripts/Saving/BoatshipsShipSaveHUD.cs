@@ -9,6 +9,7 @@ namespace Boatships
         [SerializeField] private BoatshipsShipSaveManager saveManager;
         [SerializeField] private Text statusText;
         [SerializeField] private Button saveButton;
+        private float nextRefresh;
 
         public void Configure(BoatshipsShipSaveManager manager, Text status, Button button)
         {
@@ -32,7 +33,8 @@ namespace Boatships
 
         private void Update()
         {
-            if (statusText == null || saveManager == null) return;
+            if (statusText == null || saveManager == null || !statusText.isActiveAndEnabled || Time.unscaledTime < nextRefresh) return;
+            nextRefresh = Time.unscaledTime + 0.25f;
             statusText.text = "SHIP SAVE (M11) — " + saveManager.InstalledPartCount +
                 " parts currently installed\n" + saveManager.Status + "\nF4: Save | File path in Console";
         }

@@ -14,7 +14,10 @@ namespace Boatships
     {
         private Mesh terrainMesh;
         private Mesh treeCrownMesh;
-        private readonly List<Material> biomeMaterials = new List<Material>();
+        // Shared by every island: tinted biome materials and the canopy mesh used to be created per island
+        // each time it streamed in.
+        private static readonly Dictionary<long, Material> biomeMaterials = new Dictionary<long, Material>();
+        private static Mesh sharedCrownMesh;
 
         public void Build(ArchipelagoWorld.IslandSite site, int resolution, int worldSeed,
             Material sand, Material grass, Material rock, Material bark,
@@ -77,7 +80,8 @@ namespace Boatships
             collider.sharedMesh = terrainMesh;
 
             System.Random random = new System.Random(site.DetailSeed);
-            treeCrownMesh = CreateCone(8);
+            if (sharedCrownMesh == null) sharedCrownMesh = CreateCone(8);
+            treeCrownMesh = sharedCrownMesh;
             DecorationRange(shape, out float minY, out float maxY);
             bool palms = site.Biome == IslandBiome.Tropical &&
                 (shape == IslandShape.Atoll || shape == IslandShape.Lowland || shape == IslandShape.Crescent || shape == IslandShape.Twin);
@@ -96,14 +100,13 @@ namespace Boatships
             {
                 if (!TryDecorationPoint(site, worldSeed, random, 0.6f, 99f, out Vector3 point)) continue;
                 float size = Mathf.Lerp(0.6f, shape == IslandShape.Peak || shape == IslandShape.Ridge ? 1.8f : 1.1f, (float)random.NextDouble());
-                GameObject pebble = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                GameObject pebble = BoatshipsPrimitives.Create(PrimitiveType.Cube);
                 pebble.name = "Low Poly Rock";
                 pebble.transform.SetParent(transform, false);
                 pebble.transform.localPosition = point + Vector3.up * (0.2f * size);
                 pebble.transform.localRotation = Quaternion.Euler((float)random.NextDouble() * 30f, (float)random.NextDouble() * 180f, 15f);
                 pebble.transform.localScale = new Vector3(0.8f, 0.5f, 0.6f) * size;
                 pebble.GetComponent<MeshRenderer>().sharedMaterial = stone;
-                Destroy(pebble.GetComponent<Collider>());
             }
             if (shape == IslandShape.Mesa || shape == IslandShape.Ridge || shape == IslandShape.Peak ||
                 (shape == IslandShape.Crescent && site.Biome != IslandBiome.Tropical))
@@ -113,6 +116,10 @@ namespace Boatships
                 AddPort(site, worldSeed, sand, bark, stone, port);
             else if (site.Kind != IslandKind.Deserted)
                 AddLandmark(site, worldSeed, port, pirate, treasure);
+            // Hundreds of trunk, frond and rock primitives become one renderer per material.
+            BoatshipsTown harbour = GetComponent<BoatshipsTown>();
+            Transform townRoot = harbour != null ? harbour.Root : null;
+            BoatshipsMeshBatcher.Combine(transform, townRoot != null ? new[] { townRoot } : null);
         }
 
         private static void AddTriangle(int a, int b, int c, Vector3[] positions, List<int>[] indices, float rockLine)
@@ -192,6 +199,72 @@ namespace Boatships
         }
 
         public static float Height(ArchipelagoWorld.IslandSite site, int seed, float localX, float localZ)
+        {
+            float raw = ShapeHeight(site, seed, localX, localZ);
+            return site.Kind == IslandKind.PortSite ? TownTerraceHeight(site, seed, localX, localZ, raw) : raw;
+        }
+
+        // ───────────────────────────── Town terrace ─────────────────────────────
+        // Port islands level a shelf of ground behind the harbour beach so the town, its square and the fort
+        // stand on (almost) flat land. A short ramp runs from the shelf down to the beach and pier.
+
+        private struct TownTerrace { public Vector2 Centre, Outward; public float Level, Reference, RampStart, RampEnd; }
+
+        private const float TerraceInset = 3.6f;      // shelf centre, inland from the natural shore
+        private const float TerraceFlatRadius = 10f;  // fully levelled (covers the square and both house rings)
+        private const float TerraceFadeRadius = 14.5f; // back to natural terrain
+        private static readonly Dictionary<(int, int, Vector2, float), TownTerrace> Terraces =
+            new Dictionary<(int, int, Vector2, float), TownTerrace>();
+
+        /// <summary>Island-local centre of the levelled town shelf on a port island.</summary>
+        public static Vector2 TownCentre(ArchipelagoWorld.IslandSite site, int seed) => TerraceOf(site, seed).Centre;
+
+        private static TownTerrace TerraceOf(ArchipelagoWorld.IslandSite site, int seed)
+        {
+            var key = (site.DetailSeed, seed, site.Center, site.Radius);
+            if (Terraces.TryGetValue(key, out TownTerrace terrace)) return terrace;
+            if (Terraces.Count > 256) Terraces.Clear();
+            Quaternion facing = PortRotation(site);
+            Vector3 direction = facing * Vector3.forward;
+            Vector2 outward = new Vector2(direction.x, direction.z);
+            float shore = PortShoreDistance(site, seed, facing, true);
+            Vector2 centre = outward * Mathf.Max(site.Radius * 0.2f, shore - TerraceInset);
+            float reference = ShapeHeight(site, seed, centre.x, centre.y);
+            float sum = reference;
+            for (int i = 0; i < 8; i++)
+            {
+                float a = i * Mathf.PI * 0.25f;
+                sum += ShapeHeight(site, seed, centre.x + Mathf.Sin(a) * 5f, centre.y + Mathf.Cos(a) * 5f);
+            }
+            terrace = new TownTerrace
+            {
+                Centre = centre, Outward = outward, Reference = reference,
+                Level = Mathf.Clamp(sum / 9f, 1.4f, 2.5f),
+                RampStart = 1.4f
+            };
+            terrace.RampEnd = Mathf.Max(terrace.RampStart + 1.8f, shore - centre.magnitude);
+            Terraces[key] = terrace;
+            return terrace;
+        }
+
+        private static float TownTerraceHeight(ArchipelagoWorld.IslandSite site, int seed, float x, float z, float raw)
+        {
+            TownTerrace t = TerraceOf(site, seed);
+            Vector2 p = new Vector2(x, z);
+            float distance = (p - t.Centre).magnitude;
+            if (distance >= TerraceFadeRadius) return raw;
+            // Nearly flat: keep a whisper of the natural undulation so the shelf does not look machined.
+            float shelf = t.Level + Mathf.Clamp((raw - t.Reference) * 0.08f, -0.25f, 0.25f);
+            // Seaward of the shelf, slope evenly down to the beach (0.35 at the natural shore) and the sea floor.
+            float along = Vector2.Dot(p - t.Centre, t.Outward);
+            float slope = (t.Level - 0.35f) / (t.RampEnd - t.RampStart);
+            float target = Mathf.Max(-1.6f, shelf - slope * Mathf.Max(0f, along - t.RampStart));
+            // Never raise new land out at the ship navigation circle.
+            if (target > raw) target = Mathf.Lerp(raw, target, Smooth(site.Radius * 0.8f, site.Radius * 0.7f, p.magnitude));
+            return Mathf.Lerp(raw, target, Smooth(TerraceFadeRadius, TerraceFlatRadius, distance));
+        }
+
+        private static float ShapeHeight(ArchipelagoWorld.IslandSite site, int seed, float localX, float localZ)
         {
             float worldX = site.Center.x + localX;
             float worldZ = site.Center.y + localZ;
@@ -405,8 +478,11 @@ namespace Boatships
         private Material BiomeMaterial(Material source, Color color)
         {
             if (source == null) return null;
+            Color32 c = color;
+            long key = ((long)source.GetEntityId().GetHashCode() << 32) ^ (((long)c.r << 24) | ((long)c.g << 16) | ((long)c.b << 8) | c.a);
+            if (biomeMaterials.TryGetValue(key, out Material cached) && cached != null) return cached;
             Material instance = new Material(source) { color = color };
-            biomeMaterials.Add(instance);
+            biomeMaterials[key] = instance;
             return instance;
         }
 
@@ -437,13 +513,12 @@ namespace Boatships
 
         private void AddTree(Vector3 basePoint, float scale, Material bark, Material leaves)
         {
-            GameObject trunk = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            GameObject trunk = BoatshipsPrimitives.Create(PrimitiveType.Cylinder);
             trunk.name = "Tree Trunk";
             trunk.transform.SetParent(transform, false);
             trunk.transform.localPosition = basePoint + Vector3.up * (0.75f * scale);
             trunk.transform.localScale = new Vector3(0.17f * scale, 0.75f * scale, 0.17f * scale);
             trunk.GetComponent<MeshRenderer>().sharedMaterial = bark;
-            Destroy(trunk.GetComponent<Collider>());
 
             GameObject crown = new GameObject("Low Poly Canopy", typeof(MeshFilter), typeof(MeshRenderer));
             crown.transform.SetParent(transform, false);
@@ -468,7 +543,7 @@ namespace Boatships
             {
                 Quaternion tilt = Quaternion.Euler(lean * (i + 1) * 0.6f, 0f, 0f);
                 Vector3 axis = tilt * Vector3.up;
-                GameObject piece = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                GameObject piece = BoatshipsPrimitives.Create(PrimitiveType.Cylinder);
                 piece.name = "Palm Trunk";
                 piece.transform.SetParent(palm, false);
                 piece.transform.localPosition = point + axis * segment * 0.5f;
@@ -476,7 +551,6 @@ namespace Boatships
                 float girth = 0.16f * scale * (1f - i * 0.08f);
                 piece.transform.localScale = new Vector3(girth, segment * 0.52f, girth);
                 piece.GetComponent<MeshRenderer>().sharedMaterial = bark;
-                Destroy(piece.GetComponent<Collider>());
                 point += axis * segment;
             }
             int fronds = 7;
@@ -487,25 +561,23 @@ namespace Boatships
                 pivot.localPosition = point;
                 pivot.localRotation = Quaternion.Euler(0f, i * 360f / fronds + (float)random.NextDouble() * 15f, 0f) *
                     Quaternion.Euler(-12f + (float)random.NextDouble() * 30f, 0f, 0f);
-                GameObject leaf = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                GameObject leaf = BoatshipsPrimitives.Create(PrimitiveType.Cube);
                 leaf.name = "Palm Leaf";
                 leaf.transform.SetParent(pivot, false);
                 leaf.transform.localPosition = new Vector3(0f, -0.12f * scale, 0.55f * scale);
                 leaf.transform.localRotation = Quaternion.Euler(18f, 0f, 0f);
                 leaf.transform.localScale = new Vector3(0.32f * scale, 0.03f * scale, 1.15f * scale);
                 leaf.GetComponent<MeshRenderer>().sharedMaterial = leaves;
-                Destroy(leaf.GetComponent<Collider>());
             }
             for (int i = 0; i < 3; i++)
             {
-                GameObject nut = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                GameObject nut = BoatshipsPrimitives.Create(PrimitiveType.Sphere);
                 nut.name = "Coconut";
                 nut.transform.SetParent(palm, false);
                 float a = i * 2.1f;
                 nut.transform.localPosition = point + new Vector3(Mathf.Sin(a) * 0.1f, -0.12f, Mathf.Cos(a) * 0.1f) * scale;
                 nut.transform.localScale = Vector3.one * 0.13f * scale;
                 nut.GetComponent<MeshRenderer>().sharedMaterial = bark;
-                Destroy(nut.GetComponent<Collider>());
             }
         }
 
@@ -534,14 +606,13 @@ namespace Boatships
                     {
                         float tierHeight = height * (tier == 0 ? 0.45f : tier == 1 ? 0.33f : 0.22f);
                         float tierWidth = width * (1f - tier * 0.22f);
-                        GameObject block = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                        GameObject block = BoatshipsPrimitives.Create(PrimitiveType.Cube);
                         block.name = "Sea Stack Rock";
                         block.transform.SetParent(stack, false);
                         block.transform.localPosition = new Vector3(((float)random.NextDouble() - 0.5f) * 0.2f, y + tierHeight * 0.5f, 0f);
                         block.transform.localRotation = Quaternion.Euler(((float)random.NextDouble() - 0.5f) * 10f, tier * 25f, ((float)random.NextDouble() - 0.5f) * 10f);
                         block.transform.localScale = new Vector3(tierWidth, tierHeight, tierWidth * 0.85f);
                         block.GetComponent<MeshRenderer>().sharedMaterial = rock;
-                        Destroy(block.GetComponent<Collider>());
                         y += tierHeight * 0.92f;
                     }
                     break;
@@ -557,13 +628,12 @@ namespace Boatships
             Material lava = BiomeMaterial(source, new Color(1f, 0.38f, 0.08f));
             lava.EnableKeyword("_EMISSION");
             lava.SetColor("_EmissionColor", new Color(1f, 0.35f, 0.05f) * 2.2f);
-            GameObject pool = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            GameObject pool = BoatshipsPrimitives.Create(PrimitiveType.Cylinder);
             pool.name = "Crater Lava";
             pool.transform.SetParent(transform, false);
             pool.transform.localPosition = new Vector3(0f, Height(site, seed, 0f, 0f) + 0.25f, 0f);
             pool.transform.localScale = new Vector3(site.Radius * 0.2f, 0.05f, site.Radius * 0.2f);
             pool.GetComponent<MeshRenderer>().sharedMaterial = lava;
-            Destroy(pool.GetComponent<Collider>());
         }
 
         /// <summary>Compass bearing (degrees) from the island centre to its harbour.</summary>
@@ -574,14 +644,15 @@ namespace Boatships
 
         private static Quaternion PortRotation(ArchipelagoWorld.IslandSite site) => Quaternion.Euler(0f, PortYaw(site), 0f);
 
-        private static float PortShoreDistance(ArchipelagoWorld.IslandSite site, int seed, Quaternion facing)
+        private static float PortShoreDistance(ArchipelagoWorld.IslandSite site, int seed, Quaternion facing, bool natural = false)
         {
             Vector3 direction = facing * Vector3.forward;
             // Search from the sea inland so hills cannot be mistaken for the outer coast.
             for (float distance = site.Radius; distance > 0f; distance -= 0.25f)
             {
                 Vector3 sample = direction * distance;
-                if (Height(site, seed, sample.x, sample.z) >= 0.35f) return distance;
+                float height = natural ? ShapeHeight(site, seed, sample.x, sample.z) : Height(site, seed, sample.x, sample.z);
+                if (height >= 0.35f) return distance;
             }
             return site.Radius * 0.6f;
         }
@@ -592,89 +663,15 @@ namespace Boatships
             Quaternion facing = PortRotation(site);
             Vector3 outward = facing * Vector3.forward;
             float shore = PortShoreDistance(site, seed, facing);
-            Material windows = BiomeMaterial(stone, new Color(0.08f, 0.22f, 0.28f));
             Transform settlement = new GameObject("Port Village and Pier").transform;
             settlement.SetParent(transform, false);
             // Anchor the harbour on the coast, rather than at the island centre.
             settlement.localPosition = outward * shore;
             settlement.localRotation = facing;
-            // The walkable harbour town (pier, square, shops, houses, townsfolk) is the port's settlement,
-            // seen from the sea and walked in first person alike.
+            // The walkable harbour town (pier, square, shops, fort, houses, townsfolk) is the port's settlement,
+            // seen from the sea and walked in first person alike. Its fort guards the water off the pier.
             BoatshipsTown town = gameObject.AddComponent<BoatshipsTown>();
-            town.BuildHarbour(site, seed, this);
-            AddFort(site, seed, settlement, facing, stone, timber, windows);
-        }
-
-        private void AddFort(ArchipelagoWorld.IslandSite site, int seed, Transform settlement,
-            Quaternion harbourFacing, Material stone, Material timber, Material dark)
-        {
-            // Place the bastion beside the waterfront crescent, clear of houses and the pier.
-            Quaternion facing = harbourFacing * Quaternion.Euler(0f, 100f, 0f);
-            float coast = PortShoreDistance(site, seed, facing);
-            Vector3 centre = facing * (Vector3.forward * Mathf.Max(0f, coast - 3.5f));
-            float low = float.PositiveInfinity, high = float.NegativeInfinity;
-            for (int corner = 0; corner < 4; corner++)
-            {
-                Vector3 sample = centre + facing * new Vector3(corner % 2 == 0 ? -3f : 3f,
-                    0f, corner < 2 ? -3f : 3f);
-                float height = Height(site, seed, sample.x, sample.z);
-                low = Mathf.Min(low, height);
-                high = Mathf.Max(high, height);
-            }
-            Transform fort = new GameObject("Harbour Fort").transform;
-            fort.SetParent(settlement, false);
-            Vector3 islandPosition = new Vector3(centre.x, high + 0.2f, centre.z);
-            fort.position = transform.TransformPoint(islandPosition);
-            fort.rotation = transform.rotation * facing;
-            Block("Fort foundation", fort, new Vector3(0f, (low - high) * 0.5f - 0.1f, 0f),
-                new Vector3(6.6f, high - low + 0.4f, 6.6f), stone);
-            Block("Stone bastion", fort, Vector3.up * 1.25f, new Vector3(6f, 2.5f, 6f), stone);
-            Block("Battery deck", fort, Vector3.up * 2.6f, new Vector3(6.4f, 0.25f, 6.4f), stone);
-            Block("Fort gate", fort, new Vector3(0f, 0.9f, -3.05f), new Vector3(1.3f, 1.8f, 0.15f), timber);
-            for (int side = -1; side <= 1; side += 2)
-            {
-                Block("Fort parapet", fort, new Vector3(side * 3f, 3f, 0f), new Vector3(0.4f, 0.7f, 6.4f), stone);
-                Block("Fort parapet", fort, new Vector3(0f, 3f, side * 3f), new Vector3(6.4f, 0.7f, 0.4f), stone);
-                for (int i = -2; i <= 2; i++)
-                {
-                    Block("Battlement", fort, new Vector3(side * 3f, 3.6f, i * 1.3f), new Vector3(0.6f, 0.6f, 0.6f), stone);
-                    Block("Battlement", fort, new Vector3(i * 1.3f, 3.6f, side * 3f), new Vector3(0.6f, 0.6f, 0.6f), stone);
-                }
-            }
-            Transform[] muzzles = new Transform[2];
-            for (int i = 0; i < muzzles.Length; i++)
-            {
-                Vector3 position = new Vector3(i == 0 ? -1.4f : 1.4f, 3.5f, 1.2f);
-                Block("Cannon carriage", fort, position + Vector3.down * 0.5f, new Vector3(0.8f, 0.5f, 1.4f), timber);
-                Transform pivot = new GameObject("Fort Cannon " + (i + 1)).transform;
-                pivot.SetParent(fort, false);
-                pivot.localPosition = position;
-                GameObject barrel = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-                barrel.name = "Iron barrel";
-                barrel.transform.SetParent(pivot, false);
-                barrel.transform.localPosition = Vector3.forward * 0.8f;
-                barrel.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
-                barrel.transform.localScale = new Vector3(0.45f, 0.9f, 0.45f);
-                barrel.GetComponent<MeshRenderer>().sharedMaterial = dark;
-                Destroy(barrel.GetComponent<Collider>());
-                muzzles[i] = new GameObject("Muzzle").transform;
-                muzzles[i].SetParent(pivot, false);
-                muzzles[i].localPosition = Vector3.forward * 1.8f;
-            }
-            HarbourFort battery = fort.gameObject.AddComponent<HarbourFort>();
-            battery.Configure(settlement.TransformPoint(Vector3.forward * 6f), muzzles, FindAnyObjectByType<OceanWaves>());
-        }
-
-        private static Transform Block(string name, Transform parent, Vector3 position, Vector3 size, Material material)
-        {
-            GameObject block = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            block.name = name;
-            block.transform.SetParent(parent, false);
-            block.transform.localPosition = position;
-            block.transform.localScale = size;
-            block.GetComponent<MeshRenderer>().sharedMaterial = material;
-            Destroy(block.GetComponent<Collider>());
-            return block.transform;
+            town.BuildHarbour(site, seed, this, settlement.TransformPoint(Vector3.forward * 6f));
         }
 
         private void AddLandmark(ArchipelagoWorld.IslandSite site, int seed,
@@ -684,20 +681,18 @@ namespace Boatships
                 site.Kind == IslandKind.PirateBaseSite ? pirate : treasure;
             Vector3 top = LandmarkPoint(site, seed);
             float y = top.y;
-            GameObject pole = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            GameObject pole = BoatshipsPrimitives.Create(PrimitiveType.Cylinder);
             pole.name = site.Kind + " Placeholder Marker";
             pole.transform.SetParent(transform, false);
             pole.transform.localPosition = new Vector3(top.x, y + 1.6f, top.z);
             pole.transform.localScale = new Vector3(0.15f, 1.6f, 0.15f);
             pole.GetComponent<MeshRenderer>().sharedMaterial = chosen;
-            Destroy(pole.GetComponent<Collider>());
-            GameObject flag = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            GameObject flag = BoatshipsPrimitives.Create(PrimitiveType.Cube);
             flag.name = "Marker Flag";
             flag.transform.SetParent(transform, false);
             flag.transform.localPosition = new Vector3(top.x + 0.6f, y + 2.7f, top.z);
             flag.transform.localScale = new Vector3(1.2f, 0.6f, 0.12f);
             flag.GetComponent<MeshRenderer>().sharedMaterial = chosen;
-            Destroy(flag.GetComponent<Collider>());
         }
 
         /// <summary>Highest ground near the middle of the island, for flags and markers.</summary>
@@ -741,8 +736,7 @@ namespace Boatships
         private void OnDestroy()
         {
             if (terrainMesh != null) Destroy(terrainMesh);
-            if (treeCrownMesh != null) Destroy(treeCrownMesh);
-            foreach (Material material in biomeMaterials) if (material != null) Destroy(material);
+            // The canopy mesh and biome materials are shared between islands and kept for the session.
         }
     }
 }

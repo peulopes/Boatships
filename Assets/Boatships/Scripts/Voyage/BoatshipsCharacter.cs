@@ -260,7 +260,7 @@ namespace Boatships
         public void Save()
         {
             if (profile == null || loadFailed || world == null || loadedSeed != world.Seed) return;
-            try { BoatshipsSaveStore.Write(SavePath(loadedSeed), JsonUtility.ToJson(profile, true)); }
+            try { BoatshipsSaveStore.Write(SavePath(loadedSeed), JsonUtility.ToJson(profile)); }
             catch (Exception ex) { Debug.LogWarning("Boatships character save failed: " + ex.Message, this); }
         }
 

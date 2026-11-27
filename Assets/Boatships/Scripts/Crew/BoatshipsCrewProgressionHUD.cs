@@ -39,7 +39,7 @@ namespace Boatships
         private void Recover() { if (progression != null) progression.RecoverOverboardAtPort(); Refresh(); }
         private void Refresh()
         {
-            if (progression == null || summary == null) return;
+            if (progression == null || summary == null || !summary.isActiveAndEnabled) return;
             summary.text = "CREW PROGRESSION (M13)\n" + progression.SelectedCrewStatus +
                 "\nReload x" + progression.GunReloadMultiplier.ToString("0.00") +
                 " | Speed x" + progression.SailingSpeedMultiplier.ToString("0.00") +

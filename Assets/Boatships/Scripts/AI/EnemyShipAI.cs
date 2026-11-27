@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Boatships
@@ -64,10 +65,23 @@ namespace Boatships
             retreatAtHullFraction = kind == EncounterKind.Patrol ? 0.12f : 0.3f;
         }
 
+        /// <summary>A ship of the player's company: no patrol wandering, and her captain's skill sharpens her gunnery.</summary>
+        public void ConfigureCompany(EncounterKind kind, int tier, int captainSkill)
+        {
+            ConfigureEncounter(kind, tier, transform.position);
+            patrolEnabled = false;
+            detectionRange = 60f;
+            float skill = Mathf.Clamp01(captainSkill / 100f);
+            damage *= 1f + skill * 0.4f;
+            reloadSeconds = Mathf.Max(1.4f, reloadSeconds * (1f - skill * 0.3f));
+            retreatAtHullFraction = 0.2f;
+        }
+
         /// <summary>Points this ship's AI at another vessel (used for AI-vs-AI crew battles).
         /// The player's shipyard pause no longer applies once retargeted.</summary>
         public void SetTarget(ShipCombatTarget target)
         {
+            if (target == player && playerShipyard == null) return; // already on it: keep the current manoeuvre
             player = target;
             playerShipyard = null;
             targetPositionSet = false;
@@ -76,6 +90,31 @@ namespace Boatships
         }
 
         public ShipCombatTarget Target => player;
+        public float CloseRange => closeRange;
+        public float ApproachRange => approachRange;
+
+        /// <summary>Every broadside muzzle, port then starboard.</summary>
+        public IEnumerable<Transform> Muzzles
+        {
+            get
+            {
+                if (portMuzzles != null) foreach (Transform muzzle in portMuzzles) yield return muzzle;
+                if (starboardMuzzles != null) foreach (Transform muzzle in starboardMuzzles) yield return muzzle;
+            }
+        }
+
+        /// <summary>When the ship's crew is simulated on deck, its gunners load and fire the deck cannons by hand,
+        /// so the automatic broadside is off.</summary>
+        public bool CrewGunnery { get; set; }
+        /// <summary>False when nobody is left at the wheel: the ship drifts.</summary>
+        public bool Helmed { get; set; } = true;
+
+        /// <summary>Distances the ship keeps from its target (closer lets its crew board).</summary>
+        public void SetEngagementRanges(float close, float approach)
+        {
+            closeRange = Mathf.Max(1f, close);
+            approachRange = Mathf.Max(closeRange + 1f, approach);
+        }
 
         public EnemyState State => state;
         public float HullFraction => self != null && self.TotalVoxels > 0
@@ -103,6 +142,27 @@ namespace Boatships
             body.useGravity = false;
             body.interpolation = RigidbodyInterpolation.Interpolate;
             SetupReloadArrays();
+            RigMast();
+        }
+
+        /// <summary>Swaps the scene's placeholder pirate mast and sail for the low-poly rig the player's ship uses.
+        /// Clones of an already-rigged template keep the rig they copied.</summary>
+        private void RigMast()
+        {
+            if (visualPivot == null) return;
+            VoxelHull hull = visualPivot.GetComponentInChildren<VoxelHull>(true);
+            Transform oldMast = visualPivot.Find("Pirate Mast"), oldSail = visualPivot.Find("Pirate Sail");
+            if (hull == null || hull.Definition == null || oldSail == null) return;
+            if (hull.transform.Find("Pirate Rig") == null)
+            {
+                Renderer sail = oldSail.GetComponent<Renderer>();
+                var rig = new GameObject("Pirate Rig").transform;
+                rig.SetParent(hull.transform, false);
+                rig.localPosition = new Vector3(0f, HullShape.DeckY(hull.Definition) - 0.1f, 0.3f);
+                ShipEquipmentModels.Rig(rig, sail != null ? sail.sharedMaterial : null, hull.Definition);
+            }
+            oldSail.gameObject.SetActive(false);
+            if (oldMast != null) oldMast.gameObject.SetActive(false);
         }
 
         private void SetupReloadArrays()
@@ -189,8 +249,9 @@ namespace Boatships
                 throttle = speed * 0.15f;
             }
 
+            if (!Helmed) { throttle = 0f; course = body.rotation.eulerAngles.y; }
             FollowOcean(dt, throttle, course);
-            if (inAttackBand && state == EnemyState.Broadside && Time.time >= nextFireAllowedAt)
+            if (!CrewGunnery && inAttackBand && state == EnemyState.Broadside && Time.time >= nextFireAllowedAt)
                 TryFireBroadside(distance);
         }
 

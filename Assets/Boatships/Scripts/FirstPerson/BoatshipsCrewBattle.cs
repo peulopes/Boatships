@@ -25,6 +25,7 @@ namespace Boatships
         private int attackerTier;
         private bool boarded;
         private float startedAt;
+        private float nextStatusAt;
         private string employerName;
 
         public bool Active { get; private set; }
@@ -91,8 +92,53 @@ namespace Boatships
                     Use = () => player.Mount(cannon)
                 });
             }
+            AddSailorDuties();
             player.SetExit("Hide below deck", () => Finish(UnityEngine.Random.value < 0.45f, "You hid below deck until the fighting stopped."));
             return true;
+        }
+
+        /// <summary>A hand on another captain's ship works the guns, plugs leaks and fights boarders, but never steers.</summary>
+        private void AddSailorDuties()
+        {
+            VoxelHull hull = employerShip.Hull;
+            Vector3 helm = new Vector3(0f, deck.Top, -HullShape.HalfLength(hull.Definition) * 0.7f);
+            foreach (HullHardpoint slot in hull.Definition.Hardpoints)
+                if (slot.type == HullHardpointType.Helm) helm = slot.localPosition;
+            player.AddInteractable(new FpsInteractable
+            {
+                Position = () => deck != null && deck.Valid ? deck.ToWorld(helm) : Vector3.zero,
+                Prompt = "The helm — only the captain steers this ship",
+                Radius = 0.7f,
+                Use = () => Say("\"Back to your post, sailor!\" The " + employerName + "'s captain keeps the wheel.")
+            });
+            Vector3 pumps = deck.Nearest(new Vector3(0f, deck.Top, -0.3f));
+            player.AddInteractable(new FpsInteractable
+            {
+                Position = () => deck != null && deck.Valid ? deck.ToWorld(pumps) : Vector3.zero,
+                Prompt = "Hatch to the hold — plug the leaks",
+                Radius = 0.7f,
+                Use = PlugLeaks
+            });
+        }
+
+        private void PlugLeaks()
+        {
+            ShipFlooding flood = employerShip != null ? employerShip.GetComponent<ShipFlooding>() : null;
+            if (flood == null || flood.SubmergedUnpatchedBreaches == 0) { Say("The hold is dry — no leaks below the waterline."); return; }
+            if (!flood.EmergencyPatch()) { Say("No more plugs and patches in the hold."); return; }
+            player.MarkContributed();
+            Say("You plugged the leaks below the waterline.");
+            if (character != null) character.AddExperience(CharacterSkill.Fighting, 2);
+        }
+
+        private string notice;
+        private float noticeUntil;
+
+        private void Say(string text)
+        {
+            notice = text;
+            noticeUntil = Time.time + 3.5f;
+            nextStatusAt = 0f;
         }
 
         private ShipCombatTarget LiveAttacker()
@@ -121,15 +167,23 @@ namespace Boatships
             if (captain != null && captain.Target != attacker) captain.SetTarget(attacker);
             float distance = Vector3.Distance(attacker.transform.position, employerShip.transform.position);
             if (!boarded && distance < 16f && Time.time - startedAt > 12f) Board(attacker);
-            int boardersAlive = boarders.FindAll(b => b != null && b.Alive).Count;
+            int boardersAlive = 0;
+            foreach (BoatshipsDeckFighter b in boarders) if (b != null && b.Alive) boardersAlive++;
             if (boarded && boardersAlive == 0) { Finish(true, "The boarders were thrown back and the attackers fled!"); return; }
             if (distance > 95f) { Finish(true, "The attackers fell away astern."); return; }
             if (Time.time - startedAt > TimeLimit)
             { Finish(employerHull >= Fraction(attacker), "Both ships disengaged as the light failed."); return; }
 
-            player.SetStatus("Battle aboard the " + employerName + "\nEnemy hull " + Mathf.RoundToInt(Fraction(attacker) * 100f) +
-                "%   Our hull " + Mathf.RoundToInt(employerHull * 100f) + "%" +
-                (boarded ? "   Boarders " + boardersAlive : distance < 22f ? "   Prepare to repel boarders!" : ""));
+            if (Time.time >= nextStatusAt)
+            {
+                nextStatusAt = Time.time + 0.25f;
+                int leaks = employerFlood != null ? employerFlood.SubmergedUnpatchedBreaches : 0;
+                player.SetStatus("Sailor aboard the " + employerName + " — the captain steers; you man the guns, plug leaks and repel boarders" +
+                    "\nEnemy hull " + Mathf.RoundToInt(Fraction(attacker) * 100f) + "%   Our hull " + Mathf.RoundToInt(employerHull * 100f) + "%" +
+                    (leaks > 0 ? "   LEAKING — get to the hatch!" : "") +
+                    (boarded ? "   Boarders " + boardersAlive : distance < 22f ? "   Prepare to repel boarders!" : "") +
+                    (Time.time < noticeUntil ? "\n" + notice : ""));
+            }
         }
 
         private static float Fraction(ShipCombatTarget ship) =>
@@ -178,21 +232,24 @@ namespace Boatships
         }
     }
 
-    /// <summary>When the player's Fighters board an enemy, the player crosses over in first person
-    /// and fights the defenders. Every defender cut down weakens the defence of the enemy ship.</summary>
+    /// <summary>When a boarding starts, the player crosses over in first person with two of the boarding party
+    /// and fights the enemy crew already standing on her deck (BoatshipsEnemyDeckCrew keeps them there and in step
+    /// with her crew count). Cut them all down and the ship is taken intact.</summary>
     public sealed class BoatshipsBoardingFirstPerson : MonoBehaviour
     {
         private BoatshipsBoarding boarding;
         private BoatshipsFirstPerson player;
         private BoatshipsTravelController travel;
+        private BoatshipsEnemyDeckCrew enemyCrew;
+        private BoatshipsEncounterDirector director;
         private Transform flagship;
         private readonly List<BoatshipsDeckFighter> fighters = new List<BoatshipsDeckFighter>();
-        private float damagePerKill;
         private bool session;
 
-        public void Configure(BoatshipsBoarding combat, BoatshipsFirstPerson firstPerson, BoatshipsTravelController controller, Transform ownShip)
+        public void Configure(BoatshipsBoarding combat, BoatshipsFirstPerson firstPerson, BoatshipsTravelController controller,
+            Transform ownShip, BoatshipsEnemyDeckCrew deckCrew)
         {
-            boarding = combat; player = firstPerson; travel = controller; flagship = ownShip;
+            boarding = combat; player = firstPerson; travel = controller; flagship = ownShip; enemyCrew = deckCrew;
             boarding.Started += OnStarted;
             boarding.Ended += OnEnded;
             player.Downed += OnDowned;
@@ -200,20 +257,12 @@ namespace Boatships
 
         private void OnStarted(ShipCombatTarget target, EncounterRecord record)
         {
-            if (player.Active || target == null) return;
+            if (target == null) return;
+            // Board from the helm, or straight from our own deck; never out of a town or another ship's fight.
+            VoxelHull ownHull = flagship != null ? flagship.GetComponentInChildren<VoxelHull>() : null;
+            if (player.Active && !player.OnDeck(ownHull)) return;
             DeckSpace deck = DeckSpace.Create(target.Hull);
             if (deck == null) return;
-            int count = Mathf.Clamp(2 + record.tier, 3, 6);
-            damagePerKill = record.defenderHealth / count + 1f;
-            var random = new System.Random(Environment.TickCount);
-            for (int i = 0; i < count; i++)
-            {
-                BoatshipsDeckFighter defender = BoatshipsDeckFighter.Spawn("Defender", 1, deck, deck.RandomPoint(random),
-                    26f + record.tier * 8f, 5f + record.tier * 2f);
-                if (defender == null) continue;
-                defender.Died += OnDefenderDied;
-                fighters.Add(defender);
-            }
             Vector3 near = deck.Nearest(deck.ToLocal(flagship.position));
             for (int i = 0; i < 2; i++)
             {
@@ -222,28 +271,44 @@ namespace Boatships
                 mate.JumpFrom(flagship.position + Vector3.up * 0.6f);
                 fighters.Add(mate);
             }
+            // Without the standing deck crew (the deck-and-wheel battles bring their own), the defenders muster now.
+            if (enemyCrew == null && record != null)
+            {
+                director = director != null ? director : FindAnyObjectByType<BoatshipsEncounterDirector>();
+                var random = new System.Random(Environment.TickCount);
+                int count = Mathf.Min(Mathf.Max(0, record.crew), 6);
+                for (int i = 0; i < count; i++)
+                {
+                    BoatshipsDeckFighter defender = BoatshipsDeckFighter.Spawn("Defender", 1, deck, deck.RandomPoint(random),
+                        26f + record.tier * 8f, 5f + record.tier * 2f);
+                    if (defender == null) continue;
+                    defender.Died += OnDefenderDied;
+                    fighters.Add(defender);
+                }
+            }
             Vector3 toCenter = deck.Center - near;
             player.BeginDeck(target.Hull, near, Mathf.Atan2(toCenter.x, toCenter.z) * Mathf.Rad2Deg);
             player.SetExit("Back to your ship", EndSession);
-            player.SetStatus("Boarding! Cut down the defenders to take the ship.");
+            player.SetStatus("Boarding! Kill every last one of her crew to take the ship intact.\n[1] cutlass  ·  [2] flintlock pistol");
             session = true;
-        }
-
-        private void OnDefenderDied(BoatshipsDeckFighter defender)
-        {
-            if (!session) return;
-            boarding.DamageDefenders(damagePerKill);
-            if (fighters.Exists(f => f != null && f.Team == 1 && f.Alive)) return;
-            boarding.DamageDefenders(9999f);
-            player.SetStatus("The last defender falls — the ship is yours!");
         }
 
         private void Update()
         {
             if (!session || !boarding.InProgress) return;
-            int defenders = fighters.FindAll(f => f != null && f.Team == 1 && f.Alive).Count;
-            player.SetStatus("Boarding — defenders " + defenders + "   Defence " +
-                Mathf.CeilToInt(boarding.Encounter != null ? boarding.Encounter.defenderHealth : 0f));
+            int crew = boarding.DefendersLeft;
+            int onDeck = enemyCrew != null ? enemyCrew.OnDeck(boarding.Target) : fighters.FindAll(f => f != null && f.Team == 1 && f.Alive).Count;
+            EncounterRecord record = boarding.Encounter;
+            player.SetStatus("Boarding — kill them all to take her intact" +
+                "\nEnemy crew " + crew + (record != null && record.crewMax > 0 ? "/" + record.crewMax : "") +
+                "   On deck " + onDeck + (crew > onDeck ? "   (more below)" : "") +
+                (crew <= 0 ? "\nThe last of her crew falls — the ship is yours!" : ""));
+        }
+
+        private void OnDefenderDied(BoatshipsDeckFighter defender)
+        {
+            if (!session || director == null || !boarding.InProgress) return;
+            director.KillCrew(boarding.Encounter, 1, defender.FelledBy);
         }
 
         private void OnDowned()
@@ -260,10 +325,13 @@ namespace Boatships
 
         private void EndSession()
         {
+            if (!session) return;
             session = false;
             foreach (BoatshipsDeckFighter fighter in fighters) if (fighter != null) Destroy(fighter.gameObject);
             fighters.Clear();
             player.End();
+            // A boarding the captain led alone cannot go on without them.
+            if (boarding.InProgress && boarding.PlayerLed) boarding.Abort();
         }
 
         private void OnDestroy()

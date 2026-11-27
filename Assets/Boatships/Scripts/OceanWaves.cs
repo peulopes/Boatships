@@ -69,22 +69,19 @@ namespace Boatships
             int rowLength = cellsPerSide + 1;
             float half = width * 0.5f;
             float now = Time.time;
+            // Read the transform once: it was two native calls per vertex.
+            Vector3 origin = transform.position;
+            float startX = origin.x - half, startZ = origin.z - half;
 
             for (int z = 0; z < rowLength; z++)
             {
+                float wz = startZ + z * step;
+                int row = z * rowLength;
                 for (int x = 0; x < rowLength; x++)
-                {
-                    int index = z * rowLength + x;
-                    float lx = -half + x * step;
-                    float lz = -half + z * step;
-                    vertices[index].y = SampleHeight(
-                        lx + transform.position.x,
-                        lz + transform.position.z,
-                        now);
-                }
+                    vertices[row + x].y = SampleHeight(startX + x * step, wz, now);
             }
 
-            mesh.vertices = vertices;
+            mesh.SetVertices(vertices);
             mesh.RecalculateNormals();
             // Mesh bounds were assigned conservatively at construction time.
         }

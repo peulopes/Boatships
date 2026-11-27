@@ -36,6 +36,15 @@ namespace Boatships
         public float UpgradeSpeedMultiplier { get; set; } = 1f;
         public float HullSpeedMultiplier { get; set; } = 1f;
         public float HullDraft { get; set; }
+        /// <summary>An overloaded hold slows the ship (set by the inventory).</summary>
+        public float CargoSpeedMultiplier { get; set; } = 1f;
+
+        /// <summary>First-person sailing: the helm and sails drive the ship instead of WASD.
+        /// Throttle is the sail setting (-0.35 backing … 1 full sail) and persists when nobody is at the wheel.</summary>
+        public bool ExternalControl { get; set; }
+        public float ExternalThrottle { get; set; }
+        public float ExternalRudder { get; set; }
+        public float CurrentSpeed => currentSpeed;
 
         public OceanWaves Ocean { set => ocean = value; }
         public VirtualJoystick Joystick { set => moveJoystick = value; }
@@ -54,6 +63,19 @@ namespace Boatships
         private Vector2 ReadMoveInput()
         {
             // WASD steers; the arrow keys are reserved for cannon aim (WeaponGroupCombat).
+            if (ExternalControl) return new Vector2(Mathf.Clamp(ExternalRudder, -1f, 1f), Mathf.Clamp(ExternalThrottle, -1f, 1f));
+            // Captain away from the helm (walking the deck, manning a gun): she holds her course and sail.
+            if (BoatshipsFirstPerson.OnFoot)
+            {
+                if (!holdingCourse)
+                {
+                    holdingCourse = true;
+                    float top = forwardSpeed * Mathf.Max(0.1f, UpgradeSpeedMultiplier * HullSpeedMultiplier);
+                    heldThrottle = Mathf.Clamp(currentSpeed / top, -1f, 1f);
+                }
+                return new Vector2(0f, heldThrottle);
+            }
+            holdingCourse = false;
             Keyboard kb = Keyboard.current;
             if (kb == null || BoatshipsUI.Typing) return Vector2.zero;
 
@@ -62,6 +84,9 @@ namespace Boatships
             return Vector2.ClampMagnitude(new Vector2(x, y), 1f);
         }
 
+        private float heldThrottle;
+        private bool holdingCourse;
+
         private void FixedUpdate()
         {
             Vector2 input = ReadMoveInput();
@@ -69,7 +94,7 @@ namespace Boatships
                 ? input.y * forwardSpeed * Mathf.Clamp(CrewSpeedMultiplier, 0.5f, 1.5f)
                 : input.y * reverseSpeed * Mathf.Clamp(CrewSpeedMultiplier, 0.5f, 1.5f);
             float speedChange = Mathf.Abs(input.y) > 0.01f ? acceleration : deceleration;
-            targetSpeed *= UpgradeSpeedMultiplier * HullSpeedMultiplier;
+            targetSpeed *= UpgradeSpeedMultiplier * HullSpeedMultiplier * Mathf.Clamp(CargoSpeedMultiplier, 0.3f, 1f);
             currentSpeed = Mathf.MoveTowards(currentSpeed, targetSpeed, speedChange * Time.fixedDeltaTime);
 
             Quaternion yaw = body.rotation * Quaternion.Euler(

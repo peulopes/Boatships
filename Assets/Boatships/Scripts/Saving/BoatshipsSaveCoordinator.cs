@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Collections;
+using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -18,6 +19,9 @@ namespace Boatships
         private bool ready;
         private float nextCheckpoint;
         private float retryAt;
+        private float dirtySince = -1f;
+        /// <summary>Transactions arrive in bursts (buying, recruiting); one checkpoint covers the whole burst.</summary>
+        private const float DirtyCommitDelay = 3f;
         private static int? pendingNewGameSeed;
         private static bool launchNewGame;
 #if UNITY_EDITOR
@@ -69,12 +73,21 @@ namespace Boatships
 
         private void LateUpdate()
         {
-            if (!ready || Time.unscaledTime < retryAt) return;
-            if (BoatshipsSaveStore.Dirty || Time.unscaledTime >= nextCheckpoint) SaveCheckpoint();
+            if (BoatshipsSaveStore.PollBackgroundWrite()) Status = BoatshipsSaveStore.Status;
+            if (!ready || Time.unscaledTime < retryAt || BoatshipsSaveStore.Writing) return;
+            if (!BoatshipsSaveStore.Dirty) dirtySince = -1f;
+            else if (dirtySince < 0f) dirtySince = Time.unscaledTime;
+            bool dirtyDue = dirtySince >= 0f && Time.unscaledTime - dirtySince >= DirtyCommitDelay;
+            if (dirtyDue || Time.unscaledTime >= nextCheckpoint) SaveCheckpoint(true);
         }
 
-        public bool SaveCheckpoint()
+        public bool SaveCheckpoint() => SaveCheckpoint(false);
+
+        /// <summary>Captures every subsystem into one checkpoint. With <paramref name="background"/> the file write
+        /// happens off the main thread (autosaves); otherwise it completes before returning (slot switch, quit).</summary>
+        public bool SaveCheckpoint(bool background)
         {
+            dirtySince = -1f;
             if (!ready || economy == null || !economy.CanCheckpoint || ship == null || !ship.CanCheckpoint ||
                 crew == null || !crew.CanCheckpoint || progression == null || !progression.CanCheckpoint)
             {
@@ -95,7 +108,7 @@ namespace Boatships
                 retryAt = Time.unscaledTime + 5f;
                 return false;
             }
-            bool result = BoatshipsSaveStore.Commit();
+            bool result = BoatshipsSaveStore.Commit(background);
             if (result) RememberWorld(WorldSeed);
             Status = BoatshipsSaveStore.Status;
             retryAt = Time.unscaledTime + (result ? 0f : 5f);
@@ -178,10 +191,15 @@ namespace Boatships
         public static bool Enabled { get; private set; }
         public static int Slot { get; private set; }
         public static bool Dirty => dirty.Count > 0;
+        private static Task pendingWrite;
+        private static List<int> pendingSeeds;
+        /// <summary>True while a background checkpoint write is still on disk I/O.</summary>
+        public static bool Writing => pendingWrite != null && !pendingWrite.IsCompleted;
         public static string Status { get; private set; } = "Ready";
 
         public static void Initialize(int slot, string saveDirectory = null)
         {
+            WaitForBackgroundWrite();
             Enabled = true;
             Slot = Mathf.Clamp(slot, 0, 2);
             directory = saveDirectory ?? Application.persistentDataPath;
@@ -190,7 +208,33 @@ namespace Boatships
             Status = "Save slot " + (Slot + 1);
         }
 
-        public static void Shutdown() { Enabled = false; checkpoints.Clear(); dirty.Clear(); }
+        public static void Shutdown() { WaitForBackgroundWrite(); Enabled = false; checkpoints.Clear(); dirty.Clear(); }
+
+        /// <summary>Completes a finished background write on the main thread. Returns true when one completed.</summary>
+        public static bool PollBackgroundWrite()
+        {
+            if (pendingWrite == null || !pendingWrite.IsCompleted) return false;
+            Task finished = pendingWrite;
+            pendingWrite = null;
+            if (finished.IsFaulted || finished.IsCanceled)
+            {
+                // Keep the documents staged so the next checkpoint retries the write.
+                foreach (int seed in pendingSeeds) dirty.Add(seed);
+                Exception error = finished.Exception != null ? finished.Exception.GetBaseException() : null;
+                Status = "Checkpoint save failed. Retry required. " + (error != null ? error.Message : "Write cancelled.");
+                Debug.LogWarning(Status);
+            }
+            else Status = "Checkpoint saved to slot " + (Slot + 1);
+            pendingSeeds = null;
+            return true;
+        }
+
+        private static void WaitForBackgroundWrite()
+        {
+            if (pendingWrite == null) return;
+            try { pendingWrite.Wait(); } catch (AggregateException) { }
+            PollBackgroundWrite();
+        }
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetSession() => Shutdown();
 
@@ -302,12 +346,30 @@ namespace Boatships
             dirty.Add(seed);
         }
 
-        public static bool Commit()
+        public static bool Commit(bool background = false)
         {
+            WaitForBackgroundWrite();
             try
             {
-                foreach (int seed in dirty) AtomicWrite(CheckpointPath(seed), JsonUtility.ToJson(checkpoints[seed], true));
+                // Serialize on the main thread (JsonUtility is not thread safe); only disk I/O moves off it.
+                var paths = new List<string>(dirty.Count);
+                var contents = new List<string>(dirty.Count);
+                var seeds = new List<int>(dirty);
+                foreach (int seed in seeds)
+                {
+                    paths.Add(CheckpointPath(seed));
+                    contents.Add(JsonUtility.ToJson(checkpoints[seed]));
+                }
                 dirty.Clear();
+                if (background && seeds.Count > 0)
+                {
+                    pendingSeeds = seeds;
+                    pendingWrite = Task.Run(() => { for (int i = 0; i < paths.Count; i++) AtomicWrite(paths[i], contents[i]); });
+                    Status = "Saving checkpoint to slot " + (Slot + 1) + "…";
+                    return true;
+                }
+                try { for (int i = 0; i < paths.Count; i++) AtomicWrite(paths[i], contents[i]); }
+                catch { foreach (int seed in seeds) dirty.Add(seed); throw; }
                 Status = "Checkpoint saved to slot " + (Slot + 1);
                 return true;
             }

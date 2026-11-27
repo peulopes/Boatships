@@ -49,7 +49,7 @@ namespace Boatships
         private void Update()
         {
             bool sailing = shipyard == null || !shipyard.InShipyard;
-            if (readout != null && Time.time >= nextReadout)
+            if (readout != null && readout.isActiveAndEnabled && Time.time >= nextReadout)
             {
                 nextReadout = Time.time + 0.12f;
                 readout.text = sailing

@@ -22,10 +22,17 @@ namespace Boatships
         private Mesh generatedMesh;
         private int initialBlocks;
         private int activeBlocks;
+        private HullDressing dressing;
 
+        // Submeshes: 0 = lower plank of each strake, 1 = upper (lighter) plank, 2/3 = alternating deck planks,
+        // 4 = charred wood showing through shot holes.
+        private const int Submeshes = 5, Charred = 4;
+        private static readonly Color CharredWood = new Color(0.11f, 0.075f, 0.05f);
         private readonly List<Vector3> vertices = new List<Vector3>();
-        private readonly List<int> triangles = new List<int>();
+        private readonly List<int>[] triangles = { new List<int>(), new List<int>(), new List<int>(), new List<int>(), new List<int>() };
         private readonly List<Vector2> uvs = new List<Vector2>();
+        private Vector3[,,] corners;
+        private float[,] extentPlus, extentMinus, originalPlus, originalMinus;
 
         public HullDefinition Definition => definition;
         public int TotalBlocks => initialBlocks;
@@ -34,6 +41,7 @@ namespace Boatships
         public void Configure(HullDefinition newDefinition, Material material)
         {
             definition = newDefinition;
+            corners = null;
             GetComponent<MeshRenderer>().sharedMaterial = material;
             ResetHull();
         }
@@ -118,14 +126,18 @@ namespace Boatships
             return true;
         }
 
+        // Scratch collections for the connectivity flood fill, reused across hits.
+        private static readonly HashSet<Vector3Int> visited = new HashSet<Vector3Int>();
+        private static readonly HashSet<Vector3Int> retained = new HashSet<Vector3Int>();
+        private static readonly List<Vector3Int> largest = new List<Vector3Int>();
+        private static readonly List<Vector3Int> section = new List<Vector3Int>();
+        private static readonly Queue<Vector3Int> queue = new Queue<Vector3Int>();
+        private static readonly Vector3Int[] offsets = { Vector3Int.right, Vector3Int.left, Vector3Int.up,
+            Vector3Int.down, new Vector3Int(0, 0, 1), new Vector3Int(0, 0, -1) };
+
         private void RemoveDisconnectedSections(List<Vector3> debris = null)
         {
-            var visited = new HashSet<Vector3Int>();
-            var largest = new List<Vector3Int>();
-            var section = new List<Vector3Int>();
-            var queue = new Queue<Vector3Int>();
-            Vector3Int[] offsets = { Vector3Int.right, Vector3Int.left, Vector3Int.up,
-                Vector3Int.down, new Vector3Int(0, 0, 1), new Vector3Int(0, 0, -1) };
+            visited.Clear(); largest.Clear(); section.Clear(); queue.Clear();
             for (int x = 0; x < definition.Width; x++)
             for (int y = 0; y < definition.Height; y++)
             for (int z = 0; z < definition.Length; z++)
@@ -144,9 +156,10 @@ namespace Boatships
                         if (HasBlock(next.x, next.y, next.z) && visited.Add(next)) queue.Enqueue(next);
                     }
                 }
-                if (section.Count > largest.Count) largest = new List<Vector3Int>(section);
+                if (section.Count > largest.Count) { largest.Clear(); largest.AddRange(section); }
             }
-            var retained = new HashSet<Vector3Int>(largest);
+            retained.Clear();
+            foreach (Vector3Int cell in largest) retained.Add(cell);
             foreach (Vector3Int cell in visited)
                 if (!retained.Contains(cell))
                 {
@@ -287,64 +300,164 @@ namespace Boatships
             }
 
             vertices.Clear();
-            triangles.Clear();
+            foreach (List<int> list in triangles) list.Clear();
             uvs.Clear();
-            float half = definition.BlockSize * 0.5f;
+            BuildCorners();
+            int top = definition.Height - 1;
 
+            // Faces use the sculpted corner lattice, so the blocks render as a smooth low-poly hull.
             for (int x = 0; x < definition.Width; ++x)
             for (int y = 0; y < definition.Height; ++y)
             for (int z = 0; z < definition.Length; ++z)
             {
                 if (!HasBlock(x, y, z)) continue;
-                Vector3 p = definition.BlockCenter(x, y, z);
-                Vector3 a = new Vector3(p.x - half, p.y - half, p.z - half);
-                Vector3 b = new Vector3(p.x + half, p.y + half, p.z + half);
-
-                if (!HasBlock(x + 1, y, z)) AddFace(
-                    new Vector3(b.x, a.y, a.z), new Vector3(b.x, b.y, a.z),
-                    new Vector3(b.x, b.y, b.z), new Vector3(b.x, a.y, b.z));
-                if (!HasBlock(x - 1, y, z)) AddFace(
-                    new Vector3(a.x, a.y, b.z), new Vector3(a.x, b.y, b.z),
-                    new Vector3(a.x, b.y, a.z), new Vector3(a.x, a.y, a.z));
+                // A face whose neighbour was part of the hull but has been shot away lines a hole: draw it charred.
+                if (!HasBlock(x + 1, y, z)) AddSide(
+                    corners[x + 1, y, z], corners[x + 1, y + 1, z], corners[x + 1, y + 1, z + 1], corners[x + 1, y, z + 1],
+                    IsDesignedCell(x + 1, y, z));
+                if (!HasBlock(x - 1, y, z)) AddSide(
+                    corners[x, y, z + 1], corners[x, y + 1, z + 1], corners[x, y + 1, z], corners[x, y, z],
+                    IsDesignedCell(x - 1, y, z));
                 if (!HasBlock(x, y + 1, z)) AddFace(
-                    new Vector3(a.x, b.y, a.z), new Vector3(a.x, b.y, b.z),
-                    new Vector3(b.x, b.y, b.z), new Vector3(b.x, b.y, a.z));
+                    corners[x, y + 1, z], corners[x, y + 1, z + 1], corners[x + 1, y + 1, z + 1], corners[x + 1, y + 1, z],
+                    IsDesignedCell(x, y + 1, z) ? Charred : y == top ? 2 + x % 2 : 0);
                 if (!HasBlock(x, y - 1, z)) AddFace(
-                    new Vector3(a.x, a.y, b.z), new Vector3(a.x, a.y, a.z),
-                    new Vector3(b.x, a.y, a.z), new Vector3(b.x, a.y, b.z));
-                if (!HasBlock(x, y, z + 1)) AddFace(
-                    new Vector3(b.x, a.y, b.z), new Vector3(b.x, b.y, b.z),
-                    new Vector3(a.x, b.y, b.z), new Vector3(a.x, a.y, b.z));
-                if (!HasBlock(x, y, z - 1)) AddFace(
-                    new Vector3(a.x, a.y, a.z), new Vector3(a.x, b.y, a.z),
-                    new Vector3(b.x, b.y, a.z), new Vector3(b.x, a.y, a.z));
+                    corners[x, y, z + 1], corners[x, y, z], corners[x + 1, y, z], corners[x + 1, y, z + 1],
+                    IsDesignedCell(x, y - 1, z) ? Charred : 0);
+                if (!HasBlock(x, y, z + 1)) AddSide(
+                    corners[x + 1, y, z + 1], corners[x + 1, y + 1, z + 1], corners[x, y + 1, z + 1], corners[x, y, z + 1],
+                    IsDesignedCell(x, y, z + 1));
+                if (!HasBlock(x, y, z - 1)) AddSide(
+                    corners[x, y, z], corners[x, y + 1, z], corners[x + 1, y + 1, z], corners[x + 1, y, z],
+                    IsDesignedCell(x, y, z - 1));
             }
 
             generatedMesh.Clear();
             generatedMesh.indexFormat = vertices.Count > 65535 ? UnityEngine.Rendering.IndexFormat.UInt32 :
                 UnityEngine.Rendering.IndexFormat.UInt16;
             generatedMesh.SetVertices(vertices);
-            generatedMesh.SetTriangles(triangles, 0);
+            generatedMesh.subMeshCount = Submeshes;
+            for (int i = 0; i < Submeshes; i++) generatedMesh.SetTriangles(triangles[i], i, false);
             generatedMesh.SetUVs(0, uvs);
             generatedMesh.RecalculateNormals();
             generatedMesh.RecalculateBounds();
+            ApplyMaterials();
             Revision++;
+            if (Application.isPlaying)
+            {
+                if (dressing == null) dressing = HullDressing.Attach(this);
+                dressing.Refresh();
+            }
             HullChanged?.Invoke();
         }
 
-        private void AddFace(Vector3 a, Vector3 b, Vector3 c, Vector3 d)
+        /// <summary>Planked hull, two-tone deck. Outside Play mode every slot keeps the assigned material
+        /// so scenes never reference runtime-only materials.</summary>
+        private void ApplyMaterials()
         {
+            MeshRenderer meshRenderer = GetComponent<MeshRenderer>();
+            Material source = meshRenderer.sharedMaterial;
+            if (source == null) return;
+            Material[] wanted = Application.isPlaying
+                ? new[] { source, ShipPalette.Lighter(source), ShipPalette.Solid(ShipPalette.Deck),
+                    ShipPalette.Solid(ShipPalette.DeckAlt), ShipPalette.Solid(CharredWood) }
+                : new[] { source, source, source, source, source };
+            Material[] current = meshRenderer.sharedMaterials;
+            bool same = current.Length == wanted.Length;
+            for (int i = 0; same && i < wanted.Length; i++) same = current[i] == wanted[i];
+            if (!same) meshRenderer.sharedMaterials = wanted;
+        }
+
+        /// <summary>
+        /// Places every voxel corner on the sculpted hull. Each corner row's outermost designed corner is
+        /// moved onto the HullShape outline and inner corners scale with it; corners that only stick out
+        /// past a narrower neighbouring row fold onto the outline, which smooths the voxel steps away.
+        /// Blocks a player adds beyond the original design push the outline out by the same amount.
+        /// </summary>
+        private void BuildCorners()
+        {
+            HullDefinition d = definition;
+            int w = d.Width, h = d.Height, l = d.Length;
+            if (corners == null || corners.GetLength(0) != w + 1 || corners.GetLength(1) != h + 1 || corners.GetLength(2) != l + 1)
+            {
+                corners = new Vector3[w + 1, h + 1, l + 1];
+                extentPlus = new float[h, l]; extentMinus = new float[h, l];
+                originalPlus = new float[h, l]; originalMinus = new float[h, l];
+                MeasureRows(originalPlus, originalMinus, (x, y, z) => d.ContainsBlock(x, y, z));
+            }
+            MeasureRows(extentPlus, extentMinus, (x, y, z) => design[x, y, z]);
+            float size = d.BlockSize;
+            for (int i = 0; i <= w; i++)
+            for (int j = 0; j <= h; j++)
+            for (int k = 0; k <= l; k++)
+            {
+                float x0 = i - w * 0.5f;
+                bool plus = x0 > 0f;
+                float along = Mathf.Abs(x0), narrowest = float.MaxValue, original = float.MaxValue;
+                for (int y = j - 1; y <= j; y++)
+                for (int z = k - 1; z <= k; z++)
+                {
+                    if (y < 0 || z < 0 || y >= h || z >= l) continue;
+                    float extent = plus ? extentPlus[y, z] : extentMinus[y, z];
+                    if (extent <= 0f) continue;
+                    float designed = plus ? originalPlus[y, z] : originalMinus[y, z];
+                    narrowest = Mathf.Min(narrowest, extent);
+                    original = Mathf.Min(original, designed > 0f ? designed : extent);
+                }
+                float t = (float)j / h, zc = HullShape.Station(d, k), lateral = along;
+                if (narrowest < float.MaxValue)
+                {
+                    float outline = HullShape.HalfWidthBlocks(d, t, zc) + Mathf.Max(0f, narrowest - original);
+                    lateral = along >= narrowest ? outline : along * outline / narrowest;
+                }
+                corners[i, j, k] = new Vector3((plus ? lateral : -lateral) * size,
+                    (j - h * 0.5f) * size + HullShape.Rocker(d, t, zc),
+                    (k - l * 0.5f) * size + HullShape.Rake(d, t, zc));
+            }
+        }
+
+        /// <summary>Per block row (layer y, row z): how far the outermost block reaches, in blocks from the centreline.</summary>
+        private void MeasureRows(float[,] plus, float[,] minus, System.Func<int, int, int, bool> filled)
+        {
+            int w = definition.Width;
+            for (int y = 0; y < definition.Height; y++)
+            for (int z = 0; z < definition.Length; z++)
+            {
+                plus[y, z] = 0f; minus[y, z] = 0f;
+                for (int x = 0; x < w; x++)
+                {
+                    if (!filled(x, y, z)) continue;
+                    plus[y, z] = Mathf.Max(plus[y, z], x + 1 - w * 0.5f);
+                    minus[y, z] = Mathf.Max(minus[y, z], w * 0.5f - x);
+                }
+            }
+        }
+
+        /// <summary>A side face split into two planks: v0/v3 along the bottom edge, v1/v2 along the top.</summary>
+        private void AddSide(Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3, bool charred)
+        {
+            if (charred) { AddFace(v0, v1, v2, v3, Charred); return; }
+            Vector3 left = (v0 + v1) * 0.5f, right = (v3 + v2) * 0.5f;
+            AddFace(v0, left, right, v3, 0);
+            AddFace(left, v1, v2, right, 1);
+        }
+
+        private void AddFace(Vector3 a, Vector3 b, Vector3 c, Vector3 d, int submesh)
+        {
+            // Faces folded flat by the sculpting have no area; skip them.
+            if (Vector3.Cross(b - a, c - a).sqrMagnitude + Vector3.Cross(c - a, d - a).sqrMagnitude < 1e-10f) return;
             int start = vertices.Count;
             vertices.Add(a);
             vertices.Add(b);
             vertices.Add(c);
             vertices.Add(d);
-            triangles.Add(start);
-            triangles.Add(start + 1);
-            triangles.Add(start + 2);
-            triangles.Add(start);
-            triangles.Add(start + 2);
-            triangles.Add(start + 3);
+            List<int> list = triangles[submesh];
+            list.Add(start);
+            list.Add(start + 1);
+            list.Add(start + 2);
+            list.Add(start);
+            list.Add(start + 2);
+            list.Add(start + 3);
             uvs.Add(new Vector2(0f, 0f));
             uvs.Add(new Vector2(0f, 1f));
             uvs.Add(new Vector2(1f, 1f));

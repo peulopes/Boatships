@@ -15,8 +15,8 @@ MonoBehaviour:
   itemId: storage_crate
   displayName: Storage Crate
   kind: 1
-  placement: 0
-  hardpointType: 0
+  placement: 1
+  hardpointType: 5
   widthCells: 2
   lengthCells: 2
   mass: 35

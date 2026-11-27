@@ -35,13 +35,13 @@ namespace Boatships.Editor
             if (wood == null) { EditorUtility.DisplayDialog("Boatships", "Missing starter material Wood.mat", "OK"); return; }
 
             ShipEquipmentDefinition cannon = CreateEquipment("Cannon", "deck_cannon", "Deck Cannon", ShipEquipmentKind.Cannon,
-                ShipPlacementKind.DeckGrid, HullHardpointType.Mast, 2, 2, 60, metal);
+                ShipPlacementKind.Hardpoint, HullHardpointType.Cannon, 2, 2, 60, metal);
             ShipEquipmentDefinition storage = CreateEquipment("Storage", "storage_crate", "Storage Crate", ShipEquipmentKind.Storage,
-                ShipPlacementKind.DeckGrid, HullHardpointType.Mast, 2, 2, 35, wood);
+                ShipPlacementKind.Hardpoint, HullHardpointType.Upgrade, 2, 2, 35, wood);
             ShipEquipmentDefinition armor = CreateEquipment("Armor", "deck_armor", "Deck Armor", ShipEquipmentKind.Armor,
-                ShipPlacementKind.DeckGrid, HullHardpointType.Mast, 1, 1, 25, bronze);
+                ShipPlacementKind.Hardpoint, HullHardpointType.Upgrade, 1, 1, 25, bronze);
             ShipEquipmentDefinition cabin = CreateEquipment("Cabin", "deck_cabin", "Cabin", ShipEquipmentKind.Cabin,
-                ShipPlacementKind.DeckGrid, HullHardpointType.Mast, 3, 3, 120, wood);
+                ShipPlacementKind.Hardpoint, HullHardpointType.Upgrade, 3, 3, 120, wood);
             ShipEquipmentDefinition mast = CreateEquipment("Mast", "starter_mast", "Mast & Sail", ShipEquipmentKind.Mast,
                 ShipPlacementKind.Hardpoint, HullHardpointType.Mast, 1, 1, 90, sailMaterial != null ? sailMaterial : wood);
             ShipEquipmentDefinition rudder = CreateEquipment("Rudder", "starter_rudder", "Rudder", ShipEquipmentKind.Rudder,
