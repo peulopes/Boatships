@@ -121,6 +121,10 @@ namespace Boatships
             portFaction == 0 ? MapFaction.Merchant : portFaction == 1 ? MapFaction.Navy : MapFaction.Pirate;
 
         public bool Owns(Vector2Int cell) => City(cell) != null;
+        /// <summary>Ports the player holds.</summary>
+        public int CityCount => Ready ? state.cities.Count : 0;
+        /// <summary>Raised when the player takes a port (by storm, starvation or surrender).</summary>
+        public event Action<ArchipelagoWorld.IslandSite> CityTaken;
         public bool AtWar(int portFaction) => Ready && state.wars.Contains(portFaction);
         // Free Ports field no fleets of their own; the pirates are hostile regardless.
         public bool AtWarWith(MapFaction faction) => faction != MapFaction.Pirate && AtWar(PortFactionOf(faction));
@@ -710,6 +714,7 @@ namespace Boatships
             Save();
             view.RefreshIslandMarkers();
             travel.Notify(BoatshipsNames.Island(site) + " is yours! Its people now pay their taxes to you.");
+            CityTaken?.Invoke(site);
         }
     }
 }

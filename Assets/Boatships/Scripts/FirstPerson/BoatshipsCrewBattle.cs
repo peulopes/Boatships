@@ -233,23 +233,21 @@ namespace Boatships
     }
 
     /// <summary>When a boarding starts, the player crosses over in first person with two of the boarding party
-    /// and fights the enemy crew already standing on her deck (BoatshipsEnemyDeckCrew keeps them there and in step
-    /// with her crew count). Cut them all down and the ship is taken intact.</summary>
+    /// and fights her defenders on deck (they muster as the party lands). Cut them all down and the ship is taken intact.</summary>
     public sealed class BoatshipsBoardingFirstPerson : MonoBehaviour
     {
         private BoatshipsBoarding boarding;
         private BoatshipsFirstPerson player;
         private BoatshipsTravelController travel;
-        private BoatshipsEnemyDeckCrew enemyCrew;
         private BoatshipsEncounterDirector director;
         private Transform flagship;
         private readonly List<BoatshipsDeckFighter> fighters = new List<BoatshipsDeckFighter>();
         private bool session;
 
         public void Configure(BoatshipsBoarding combat, BoatshipsFirstPerson firstPerson, BoatshipsTravelController controller,
-            Transform ownShip, BoatshipsEnemyDeckCrew deckCrew)
+            Transform ownShip)
         {
-            boarding = combat; player = firstPerson; travel = controller; flagship = ownShip; enemyCrew = deckCrew;
+            boarding = combat; player = firstPerson; travel = controller; flagship = ownShip;
             boarding.Started += OnStarted;
             boarding.Ended += OnEnded;
             player.Downed += OnDowned;
@@ -271,8 +269,8 @@ namespace Boatships
                 mate.JumpFrom(flagship.position + Vector3.up * 0.6f);
                 fighters.Add(mate);
             }
-            // Without the standing deck crew (the deck-and-wheel battles bring their own), the defenders muster now.
-            if (enemyCrew == null && record != null)
+            // Her defenders muster on deck as the party lands.
+            if (record != null)
             {
                 director = director != null ? director : FindAnyObjectByType<BoatshipsEncounterDirector>();
                 var random = new System.Random(Environment.TickCount);
@@ -297,7 +295,7 @@ namespace Boatships
         {
             if (!session || !boarding.InProgress) return;
             int crew = boarding.DefendersLeft;
-            int onDeck = enemyCrew != null ? enemyCrew.OnDeck(boarding.Target) : fighters.FindAll(f => f != null && f.Team == 1 && f.Alive).Count;
+            int onDeck = fighters.FindAll(f => f != null && f.Team == 1 && f.Alive).Count;
             EncounterRecord record = boarding.Encounter;
             player.SetStatus("Boarding — kill them all to take her intact" +
                 "\nEnemy crew " + crew + (record != null && record.crewMax > 0 ? "/" + record.crewMax : "") +

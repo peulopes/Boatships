@@ -4,7 +4,8 @@ using UnityEngine;
 
 namespace Boatships
 {
-    public enum EncounterKind { Raider, Brig, Patrol }
+    /// <summary>Ship types. New kinds go at the end: saves store them as numbers.</summary>
+    public enum EncounterKind { Raider, Brig, Patrol, ManOfWar }
 
     /// <summary>How an enemy sailor was put out of the fight. It decides how likely they are to live to be taken prisoner.</summary>
     public enum Incapacitation { Cannon, Blade, Firearm, Sinking }
@@ -139,7 +140,7 @@ namespace Boatships
 
         /// <summary>Prisoners this ship can hold once she sails in the player's company.</summary>
         public int PrisonerCapacity =>
-            (kind == EncounterKind.Brig ? 8 : kind == EncounterKind.Patrol ? 5 : 3) + Mathf.Clamp(tier, 1, 5);
+            (kind == EncounterKind.ManOfWar ? 12 : kind == EncounterKind.Brig ? 8 : kind == EncounterKind.Patrol ? 5 : 3) + Mathf.Clamp(tier, 1, 5);
 
         /// <summary>Captured and given a captain: a ship of the player's company.</summary>
         public bool InCompany => captured && !string.IsNullOrEmpty(captainKey);
@@ -149,11 +150,11 @@ namespace Boatships
         public string DisplayName => (string.IsNullOrEmpty(shipName) ? "" : "the " + shipName + ", ") + KindName(kind) + " (tier " + tier + ")";
 
         public static string KindName(EncounterKind kind) =>
-            kind == EncounterKind.Brig ? "brig" : kind == EncounterKind.Patrol ? "patrol cutter" : "raider";
+            kind == EncounterKind.ManOfWar ? "man-o'-war" : kind == EncounterKind.Brig ? "brig" : kind == EncounterKind.Patrol ? "patrol cutter" : "raider";
 
         public static int DefaultCrew(EncounterKind kind, int tier)
         {
-            int baseCrew = kind == EncounterKind.Brig ? 9 : kind == EncounterKind.Patrol ? 7 : 5;
+            int baseCrew = kind == EncounterKind.ManOfWar ? 14 : kind == EncounterKind.Brig ? 9 : kind == EncounterKind.Patrol ? 7 : 5;
             return baseCrew + Mathf.Clamp(tier, 1, 5) * 2;
         }
 
@@ -174,7 +175,7 @@ namespace Boatships
         {
             get
             {
-                int basePrice = kind == EncounterKind.Brig ? 420 : kind == EncounterKind.Patrol ? 340 : 260;
+                int basePrice = kind == EncounterKind.ManOfWar ? 760 : kind == EncounterKind.Brig ? 420 : kind == EncounterKind.Patrol ? 340 : 260;
                 float condition = 0.4f + 0.6f * Mathf.Clamp01(hullFraction);
                 return Mathf.RoundToInt(basePrice * (1f + 0.35f * (Mathf.Clamp(tier, 1, 5) - 1)) * condition / 5f) * 5;
             }

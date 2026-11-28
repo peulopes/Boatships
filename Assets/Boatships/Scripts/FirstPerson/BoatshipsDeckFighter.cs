@@ -135,14 +135,6 @@ namespace Boatships
             return fighter;
         }
 
-        /// <summary>Turns to watch a point in the world (only matters while there is nobody on deck to fight).</summary>
-        public void FaceWorld(Vector3 world)
-        {
-            if (deck == null || !deck.Valid || !Alive) return;
-            Vector3 offset = deck.ToLocal(world) - local;
-            if (offset.x * offset.x + offset.z * offset.z > 0.0001f) yaw = Mathf.Atan2(offset.x, offset.z) * Mathf.Rad2Deg;
-        }
-
         /// <summary>Swings across from another ship before joining the fight.</summary>
         public void JumpFrom(Vector3 world)
         {

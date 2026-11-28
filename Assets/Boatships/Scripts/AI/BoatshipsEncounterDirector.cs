@@ -278,14 +278,14 @@ namespace Boatships
             clone.SetActive(true);
             ShipCombatTarget target = clone.GetComponent<ShipCombatTarget>();
             target.Hull.EnableStructuralIntegrity();
-            target.Hull.HullHealthMultiplier = 1f + record.tier * 0.12f;
+            target.Hull.HullHealthMultiplier = (1f + record.tier * 0.12f) * (record.kind == EncounterKind.ManOfWar ? 1.8f : 1f);
             target.Hull.RestoreVoxelDamage(record.damage);
             ShipFlooding savedFlood = clone.GetComponent<ShipFlooding>();
             if (savedFlood != null && record.flooding != null) savedFlood.RestoreFlooding(record.flooding);
             EnemyShipAI ai = clone.GetComponent<EnemyShipAI>();
             ai.ConfigureEncounter(record.kind, record.tier, record.position);
             ai.enabled = !record.captured;
-            float scale = record.kind == EncounterKind.Brig ? 1.25f : record.kind == EncounterKind.Raider ? 0.85f : 1f;
+            float scale = record.kind == EncounterKind.ManOfWar ? 1.55f : record.kind == EncounterKind.Brig ? 1.25f : record.kind == EncounterKind.Raider ? 0.85f : 1f;
             clone.transform.localScale = Vector3.one * scale;
             ArchipelagoNavigationLimiter limiter = clone.GetComponent<ArchipelagoNavigationLimiter>();
             if (limiter == null) limiter = clone.AddComponent<ArchipelagoNavigationLimiter>();

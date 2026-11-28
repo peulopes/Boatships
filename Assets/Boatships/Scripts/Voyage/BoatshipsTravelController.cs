@@ -28,6 +28,12 @@ namespace Boatships
         /// <summary>A war fleet sent to besiege one of the player's cities (it parks there once it arrives).</summary>
         public bool siegeFleet;
         public Vector2Int siegeTarget;
+        /// <summary>A named sea lord's fleet (see BoatshipsRealm). Lords sail with a man-o'-war.</summary>
+        public string lordId;
+        /// <summary>Named captain shown when hailing her (lords, bounty targets, escorted merchants).</summary>
+        public string captain;
+        /// <summary>The request (quest) this party belongs to, if any.</summary>
+        public string questId;
         [NonSerialized] public bool chasing;
     }
 
@@ -208,6 +214,40 @@ namespace Boatships
         public void BindConquest(BoatshipsConquest wars) => conquest = wars;
         private BoatshipsConquest conquest;
         private Action portBattleWon;
+
+        // ── Hooks for the realm layer (renown, sea lords, requests, treasure maps: see BoatshipsRealm) ──
+        /// <summary>A battle against a map party was won; raised before the party is removed from the map.</summary>
+        public event Action<MapParty> PartyDefeated;
+        /// <summary>Any battle was won: the beaten party (or null), and whether it was a raid on a pirate haven.</summary>
+        public event Action<MapParty, bool> BattleWon;
+        /// <summary>Decides whether a party is hostile to the captain (true or false), or null for the usual rules.</summary>
+        public Func<MapParty, bool?> HostilityOverride;
+        /// <summary>The ships a party fields in battle, or null for its usual fleet.</summary>
+        public Func<MapParty, List<EncounterKind>> FleetOverride;
+        /// <summary>A party reached its destination. Return true if handled (it is then not sent on elsewhere).</summary>
+        public Func<MapParty, ArchipelagoWorld.IslandSite, bool> ArrivalHandler;
+        /// <summary>Extra options for a port's town menu and for an island's menu (site, options, back).</summary>
+        public Action<ArchipelagoWorld.IslandSite, List<MapMenuOption>, Action> TownOptions, IslandOptions;
+        public IReadOnlyList<ArchipelagoWorld.IslandSite> PortSites => ports;
+        public IReadOnlyList<ArchipelagoWorld.IslandSite> IslandSites => islands;
+        public BoatshipsWorldMapView View => view;
+
+        /// <summary>Puts a new party on the map off a site's coast, bound for a destination. Returns it, or null.</summary>
+        public MapParty SpawnPartyAt(MapFaction faction, int tier, ArchipelagoWorld.IslandSite origin, Vector2Int destination, string name = null)
+        {
+            if (state == null) return null;
+            float angle = (float)random.NextDouble() * Mathf.PI * 2f;
+            Vector2 position = Coast(origin, origin.Center + new Vector2(Mathf.Sin(angle), Mathf.Cos(angle)) * 50f, 8f);
+            var party = new MapParty
+            {
+                id = "party_" + state.serial++, name = name ?? BoatshipsNames.Ship(random), faction = faction,
+                tier = Mathf.Clamp(tier, 1, 5), position = position, speed = SpeedOf(faction, tier), destination = destination
+            };
+            state.parties.Add(party);
+            return party;
+        }
+
+        public MapParty Party(string id) => FindParty(id);
         public TravelMode CurrentMode => Mode;
         public bool HasParty(string id) => FindParty(id) != null;
         public void RemoveParty(string id) { MapParty party = FindParty(id); if (party != null) state.parties.Remove(party); }
@@ -803,7 +843,7 @@ namespace Boatships
             int merchants = 0, navy = 0, pirates = 0;
             foreach (MapParty party in state.parties)
             {
-                if (party.employer) continue;
+                if (party.employer || !string.IsNullOrEmpty(party.lordId) || !string.IsNullOrEmpty(party.questId)) continue;
                 if (party.faction == MapFaction.Merchant) merchants++;
                 else if (party.faction == MapFaction.Navy) navy++;
                 else pirates++;
@@ -884,6 +924,8 @@ namespace Boatships
             if (OnJob) return state.job.employer == MapFaction.Pirate ?
                 party.faction == MapFaction.Navy : party.faction == MapFaction.Pirate;
             if (!character.OwnsShip) return false;
+            bool? decided = HostilityOverride?.Invoke(party);
+            if (decided.HasValue) return decided.Value;
             if (conquest != null && conquest.AtWarWith(party.faction)) return true;
             return party.faction == MapFaction.Pirate ||
                 (party.faction == MapFaction.Navy && economy.Campaign.navyReputation <= -20);
@@ -912,6 +954,7 @@ namespace Boatships
                     goal = destination.Center;
                     if (Vector2.Distance(party.position, destination.Center) <= destination.Radius * 0.78f + ArrivalMargin)
                     {
+                        if (ArrivalHandler != null && ArrivalHandler(party, destination)) continue;
                         if (party.siegeFleet)
                         {
                             // Blockading one of the player's cities: stay put and report in.
@@ -953,7 +996,10 @@ namespace Boatships
         {
             string type = party.faction == MapFaction.Merchant ? "merchant cog" :
                 party.faction == MapFaction.Navy ? "navy cutter" : party.tier <= 2 ? "pirate raider" : "pirate brigantine";
-            return "the " + type + " '" + party.name + "'";
+            if (!string.IsNullOrEmpty(party.lordId))
+                type = party.faction == MapFaction.Merchant ? "League flagship" : party.faction == MapFaction.Navy ? "navy flagship" : "pirate flagship";
+            string named = "the " + type + " '" + party.name + "'";
+            return string.IsNullOrEmpty(party.captain) ? named : named + " under " + party.captain;
         }
 
         public static string FactionName(MapFaction faction) =>
@@ -1015,6 +1061,7 @@ namespace Boatships
                 options.Add(new MapMenuOption("Prisoners (" + economy.Prisoners.Count + "): hand over for bounty, recruit or release",
                     () => PrisonersMenu(true, () => TownMenu(site, null))));
             if (conquest != null) conquest.AddTownOptions(site, options, () => TownMenu(site, null));
+            TownOptions?.Invoke(site, options, () => TownMenu(site, null));
             options.Add(new MapMenuOption("Character", () => CharacterSheet(() => TownMenu(site, null))));
             if (inventory != null && inventory.Ready)
                 options.Add(new MapMenuOption("Inventory and ship's hold", () => inventory.InventoryMenu(() => TownMenu(site, null))));
@@ -1044,6 +1091,7 @@ namespace Boatships
                         "Raid the pirate haven (tier " + tier + ")", () => EnterIsland(site, true), !recent));
                 }
             }
+            IslandOptions?.Invoke(site, options, () => IslandMenu(site, null));
             options.Add(new MapMenuOption("Return to the map", null));
             view.ShowMenu(BoatshipsNames.Island(site), (string.IsNullOrEmpty(prefix) ? "" : prefix + "\n\n") + description, options);
         }
@@ -1630,6 +1678,8 @@ namespace Boatships
                 if (party.tier >= 3) kinds.Add(EncounterKind.Raider);
                 if (party.tier >= 5) kinds.Add(EncounterKind.Raider);
             }
+            List<EncounterKind> custom = FleetOverride?.Invoke(party);
+            if (custom != null && custom.Count > 0) kinds = custom;
             battleIds.AddRange(director.SpawnBattle(kinds, party.tier, 40f));
             if (battleIds.Count == 0) { Notify("The battle could not begin."); ReturnToMap(false); return; }
             battlePartyId = party.id;
@@ -1646,6 +1696,7 @@ namespace Boatships
             if (party != null)
             {
                 MapFaction beaten = party.faction;
+                PartyDefeated?.Invoke(party);
                 state.parties.Remove(party);
                 if (beaten == MapFaction.Pirate)
                     economy.TryCampaignChange(progress => { progress.navyReputation += 3; progress.merchantReputation += 2; });
@@ -1655,6 +1706,7 @@ namespace Boatships
             string leadership = character.AddExperience(CharacterSkill.Leadership, 10);
             Notify("Victory! Collect the floating cargo, then return to the World Map." +
                 (gunnery != null ? " " + gunnery : "") + (leadership != null ? " " + leadership : ""));
+            BattleWon?.Invoke(party, raidBattle);
             Save();
         }
 

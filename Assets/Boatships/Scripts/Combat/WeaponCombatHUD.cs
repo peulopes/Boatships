@@ -114,18 +114,6 @@ namespace Boatships
             bool active = weapons.CombatEnabled && weapons.isActiveAndEnabled && (docking == null || !docking.IsDocked);
             if (combatPanel != null && combatPanel.activeSelf != active) combatPanel.SetActive(active);
             if (!active) return;
-            // Campaign: the gun crews aim and fire; the captain only steers, or leaves the helm to command a gun.
-            bool crew = weapons.CrewGunnery;
-            foreach (Button group in groupButtons) if (group != null && group.gameObject.activeSelf == crew) group.gameObject.SetActive(!crew);
-            if (nextCannonButton != null && nextCannonButton.gameObject.activeSelf == crew) nextCannonButton.gameObject.SetActive(!crew);
-            if (assignButton != null && assignButton.gameObject.activeSelf == crew) assignButton.gameObject.SetActive(!crew);
-            if (crew)
-            {
-                if (statusText != null)
-                    statusText.text = weapons.CrewStatus +
-                        "\n<color=#B8A27A>WASD steer  ·  [Q] leave the helm: walk the deck, take command of a gun, board the enemy</color>";
-                return;
-            }
             if (groupLabels == null || groupLabels.Length != groupButtons.Length)
             {
                 // Looked up once (was four GetComponentInChildren calls a frame).

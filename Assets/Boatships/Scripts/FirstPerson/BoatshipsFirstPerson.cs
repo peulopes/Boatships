@@ -722,7 +722,8 @@ namespace Boatships
         {
             Vector2 look = Vector2.zero;
             Mouse mouse = Mouse.current;
-            if (mouse != null && Cursor.lockState == CursorLockMode.Locked) look += mouse.delta.ReadValue() * MouseLook;
+            if (mouse != null && Cursor.lockState == CursorLockMode.Locked) look += mouse.delta.ReadValue() * (MouseLook * BoatshipsSettings.MouseSensitivity);
+            if (BoatshipsSettings.InvertMouseY) look.y = -look.y;
             return look;
         }
 

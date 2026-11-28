@@ -200,9 +200,9 @@ namespace Boatships
                 LastMessage = offer.Name + " is already in your crew.";
                 return false;
             }
-            if (state.crew.Count >= 24)
+            if (state.crew.Count >= CrewLimit)
             {
-                LastMessage = "Crew roster is full (24).";
+                LastMessage = "Crew roster is full (" + CrewLimit + "). Gain renown to lead more men.";
                 return false;
             }
             if (state.gold < offer.Cost)
@@ -415,6 +415,11 @@ namespace Boatships
         /// <summary>Whether uncollected cargo floats within <paramref name="radius"/> of a point.</summary>
         /// <summary>Recruiting price multiplier per port (cheaper in the player's own cities).</summary>
         public static Func<Vector2Int, float> RecruitCostMultiplier;
+        /// <summary>Most sailors the roster can hold (raised by clan tier). 24 when nothing sets it.</summary>
+        public static Func<int> CrewLimitRule;
+        public static int CrewLimit => CrewLimitRule != null ? Mathf.Max(1, CrewLimitRule()) : 24;
+        /// <summary>Most ships that can sail in the company under a captain (raised by clan tier). Unlimited when nothing sets it.</summary>
+        public static Func<int> CompanyLimitRule;
 
         public bool HasLootNear(Vector3 position, float radius)
         {
@@ -505,7 +510,7 @@ namespace Boatships
             string before = JsonUtility.ToJson(state);
             state.gold = Mathf.Max(0, gold); state.wood = Mathf.Max(0, wood); state.iron = Mathf.Max(0, iron);
             state.rations = Mathf.Max(0, rations); state.spareCannons = Mathf.Max(0, cannons);
-            for (int i = 0; i < crewCount && state.crew.Count < 24; i++)
+            for (int i = 0; i < crewCount && state.crew.Count < CrewLimit; i++)
             {
                 int skill = random.Next(30, 56);
                 string key = activeSeed + ":start:" + i;
@@ -725,7 +730,7 @@ namespace Boatships
             Prisoner prisoner = state.prisoners.Find(item => item.id == prisonerId);
             if (saveLocked || !hasActiveSeed || prisoner == null) return false;
             if (!prisoner.willing) { LastMessage = prisoner.name + " spits on the deck and refuses to serve."; return false; }
-            if (state.crew.Count >= 24) { LastMessage = "Crew roster is full (24)."; return false; }
+            if (state.crew.Count >= CrewLimit) { LastMessage = "Crew roster is full (" + CrewLimit + "). Gain renown to lead more men."; return false; }
             string before = JsonUtility.ToJson(state);
             state.prisoners.Remove(prisoner);
             string key = "prisoner:" + prisoner.id;
@@ -788,6 +793,12 @@ namespace Boatships
                 LastMessage = "That sailor cannot take command of this ship.";
                 return false;
             }
+            if (!record.InCompany && CompanyLimitRule != null && CompanySize >= CompanyLimitRule())
+            {
+                LastMessage = "Your renown is not enough to command more than " + CompanyLimitRule() +
+                    " ships. Sell a ship or raise your clan's standing.";
+                return false;
+            }
             string before = JsonUtility.ToJson(state);
             string replaced = ReturnCaptainToCrew(record);
             state.crew.Remove(member);
@@ -838,7 +849,7 @@ namespace Boatships
             if (string.IsNullOrEmpty(record.captainKey)) return null;
             string name = record.captainName;
             string message;
-            if (state.crew.Count < 24 && !state.crew.Exists(item => item.offerKey == record.captainKey))
+            if (state.crew.Count < CrewLimit && !state.crew.Exists(item => item.offerKey == record.captainKey))
             {
                 state.crew.Add(new CrewMember
                 {

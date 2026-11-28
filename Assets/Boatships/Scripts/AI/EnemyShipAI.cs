@@ -59,10 +59,10 @@ namespace Boatships
             patrolEnabled = true;
             patrolOrigin = origin;
             detectionRange = 48f;
-            speed = kind == EncounterKind.Raider ? 6.5f : kind == EncounterKind.Brig ? 4f : 5f;
-            damage = 16f + Mathf.Clamp(tier, 1, 5) * 5f;
-            reloadSeconds = Mathf.Max(1.8f, 4.2f - tier * 0.3f);
-            retreatAtHullFraction = kind == EncounterKind.Patrol ? 0.12f : 0.3f;
+            speed = kind == EncounterKind.Raider ? 6.5f : kind == EncounterKind.Brig ? 4f : kind == EncounterKind.ManOfWar ? 3.6f : 5f;
+            damage = (16f + Mathf.Clamp(tier, 1, 5) * 5f) * (kind == EncounterKind.ManOfWar ? 1.35f : 1f);
+            reloadSeconds = Mathf.Max(1.8f, 4.2f - tier * 0.3f) * (kind == EncounterKind.ManOfWar ? 0.85f : 1f);
+            retreatAtHullFraction = kind == EncounterKind.Patrol || kind == EncounterKind.ManOfWar ? 0.12f : 0.3f;
         }
 
         /// <summary>A ship of the player's company: no patrol wandering, and her captain's skill sharpens her gunnery.</summary>

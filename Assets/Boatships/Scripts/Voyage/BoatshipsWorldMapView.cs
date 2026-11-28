@@ -187,6 +187,7 @@ namespace Boatships
             screenLayout.childForceExpandWidth = screenLayout.childForceExpandHeight = true;
             BoatshipsUI.Button("Center  [Home]", screens, () => follow = true, 56f, 17);
             BoatshipsUI.Button("Character  [C]", screens, () => travel.CharacterSheet(null), 56f, 17);
+            BoatshipsUI.Button("Clan  [K]", screens, () => { if (BoatshipsRealm.Instance != null) BoatshipsRealm.Instance.ClanMenu(null); }, 56f, 17);
             BoatshipsUI.Button("Contracts  [J]", screens, () => { if (hud != null) hud.OpenCampaignPage(BoatshipsCampaignHUD.ContractsPage); }, 56f, 17);
             BoatshipsUI.Button("Menu  [Esc]", screens, () => { if (hud != null) hud.OpenCampaignPage(BoatshipsCampaignHUD.SettingsPage); }, 56f, 17);
         }
@@ -339,6 +340,7 @@ namespace Boatships
             Keyboard keyboard = Keyboard.current;
             if (keyboard == null || blocked || MenuOpen || !travel.Live || BoatshipsDebugMenu.IsOpen || BoatshipsUI.Typing) return;
             if (keyboard.cKey.wasPressedThisFrame) { travel.CharacterSheet(null); return; }
+            if (keyboard.kKey.wasPressedThisFrame && BoatshipsRealm.Instance != null) { BoatshipsRealm.Instance.ClanMenu(null); return; }
             if (onMap)
             {
                 if (keyboard.spaceKey.wasPressedThisFrame) travel.Paused = !travel.Paused;
@@ -519,15 +521,19 @@ namespace Boatships
                 PartyMarker marker = partyMarkers[used++];
                 marker.Root.gameObject.SetActive(true);
                 marker.Root.anchoredPosition = WorldToMap(party.position);
-                marker.Root.localScale = Vector3.one * inverse;
+                // A sea lord's fleet is drawn larger and always named, so it can be hunted (or avoided).
+                bool lord = !string.IsNullOrEmpty(party.lordId);
+                bool named = lord || !string.IsNullOrEmpty(party.questId);
+                marker.Root.localScale = Vector3.one * inverse * (lord ? 1.6f : 1f);
                 marker.Icon.rectTransform.localRotation =
                     Quaternion.Euler(0f, 0f, -Mathf.Atan2(party.heading.x, party.heading.y) * Mathf.Rad2Deg);
                 marker.Icon.color = party.faction == MapFaction.Merchant ? new Color(0.95f, 0.88f, 0.62f) :
                     party.faction == MapFaction.Navy ? new Color(0.35f, 0.55f, 1f) : new Color(0.9f, 0.18f, 0.16f);
-                bool label = zoom > 2.2f || party.chasing || party.id == selectedParty;
+                bool label = zoom > 2.2f || party.chasing || party.id == selectedParty || named;
                 marker.Label.gameObject.SetActive(label);
+                string title = named && !string.IsNullOrEmpty(party.captain) ? party.captain : party.name;
                 if (label) marker.Label.text = party.employer ? party.name + " (your ship)" :
-                    party.chasing ? party.name + " — hunting you!" : party.name;
+                    party.chasing ? title + " — hunting you!" : title;
             }
             for (int i = used; i < partyMarkers.Count; i++) partyMarkers[i].Root.gameObject.SetActive(false);
             if (travel.OnJob) player.gameObject.SetActive(false);

@@ -281,6 +281,9 @@ namespace Boatships
                     () => { presentation.CycleFrameRate(); BuildPage(); });
                 MakeSlider("Audio Volume", 0f, 1f, presentation.Volume, false, presentation.SetVolume);
                 MakeSlider("Music Volume", 0f, 1f, BoatshipsAudio.MusicVolume, false, value => BoatshipsAudio.MusicVolume = value);
+                MakeSlider("Mouse Sensitivity", 0.25f, 2.5f, BoatshipsSettings.MouseSensitivity, false, value => BoatshipsSettings.MouseSensitivity = value);
+                MakeButton("Invert Mouse Y — " + (BoatshipsSettings.InvertMouseY ? "On" : "Off"), content,
+                    () => { BoatshipsSettings.InvertMouseY = !BoatshipsSettings.InvertMouseY; BuildPage(); });
             }
             else
             {

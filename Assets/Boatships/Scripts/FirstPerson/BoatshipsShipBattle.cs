@@ -148,7 +148,8 @@ namespace Boatships
             if (crew == null) return;
             var enemy = new Enemy { Id = id, Actor = actor, Crew = crew, AI = actor.GetComponent<EnemyShipAI>(),
                 Name = record.kind.ToString().ToLowerInvariant() };
-            int count = Mathf.Clamp(2 + tier, 3, 7);
+            // A man-o'-war carries a far bigger crew.
+            int count = Mathf.Clamp(2 + tier + (record.kind == EncounterKind.ManOfWar ? 3 : 0), 3, 10);
             for (int i = 0; i < count; i++)
             {
                 CrewDuty duty = i % 4 == 0 ? CrewDuty.Gunner : i % 4 == 1 ? CrewDuty.Carpenter : i % 4 == 2 ? CrewDuty.Fighter : CrewDuty.Gunner;

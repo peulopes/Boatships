@@ -115,7 +115,7 @@ namespace Boatships
             if (site.Kind == IslandKind.PortSite)
                 AddPort(site, worldSeed, sand, bark, stone, port);
             else if (site.Kind != IslandKind.Deserted)
-                AddLandmark(site, worldSeed, port, pirate, treasure);
+                AddLandmark(site, worldSeed, pirate, treasure, bark, stone, sand);
             // Hundreds of trunk, frond and rock primitives become one renderer per material.
             BoatshipsTown harbour = GetComponent<BoatshipsTown>();
             Transform townRoot = harbour != null ? harbour.Root : null;
@@ -675,24 +675,101 @@ namespace Boatships
         }
 
         private void AddLandmark(ArchipelagoWorld.IslandSite site, int seed,
-            Material port, Material pirate, Material treasure)
+            Material pirate, Material treasure, Material wood, Material stone, Material thatch)
         {
-            Material chosen = site.Kind == IslandKind.PortSite ? port :
-                site.Kind == IslandKind.PirateBaseSite ? pirate : treasure;
             Vector3 top = LandmarkPoint(site, seed);
-            float y = top.y;
-            GameObject pole = BoatshipsPrimitives.Create(PrimitiveType.Cylinder);
-            pole.name = site.Kind + " Placeholder Marker";
-            pole.transform.SetParent(transform, false);
-            pole.transform.localPosition = new Vector3(top.x, y + 1.6f, top.z);
-            pole.transform.localScale = new Vector3(0.15f, 1.6f, 0.15f);
-            pole.GetComponent<MeshRenderer>().sharedMaterial = chosen;
-            GameObject flag = BoatshipsPrimitives.Create(PrimitiveType.Cube);
-            flag.name = "Marker Flag";
-            flag.transform.SetParent(transform, false);
-            flag.transform.localPosition = new Vector3(top.x + 0.6f, y + 2.7f, top.z);
-            flag.transform.localScale = new Vector3(1.2f, 0.6f, 0.12f);
-            flag.GetComponent<MeshRenderer>().sharedMaterial = chosen;
+            var random = new System.Random(unchecked(seed * 17 + site.Cell.x * 7919 + site.Cell.y * 104729));
+            if (site.Kind == IslandKind.PirateBaseSite) AddPirateCamp(site, seed, top, random, pirate, wood, stone, thatch);
+            else AddTreasureCairn(site, seed, top, random, treasure, wood, stone);
+        }
+
+        /// <summary>A low-poly piece standing on the island's ground at (x, z).</summary>
+        private GameObject Piece(ArchipelagoWorld.IslandSite site, int seed, PrimitiveType type, string name,
+            float x, float z, float lift, Vector3 scale, Quaternion rotation, Material material)
+        {
+            GameObject piece = BoatshipsPrimitives.Create(type);
+            piece.name = name;
+            piece.transform.SetParent(transform, false);
+            piece.transform.localPosition = new Vector3(x, Height(site, seed, x, z) + lift, z);
+            piece.transform.localRotation = rotation;
+            piece.transform.localScale = scale;
+            piece.GetComponent<MeshRenderer>().sharedMaterial = material;
+            return piece;
+        }
+
+        /// <summary>A pirate haven: a palisade of sharpened stakes around thatched huts, a campfire, barrels and the black flag.</summary>
+        private void AddPirateCamp(ArchipelagoWorld.IslandSite site, int seed, Vector3 centre, System.Random random,
+            Material pirate, Material wood, Material stone, Material thatch)
+        {
+            float cx = centre.x, cz = centre.z;
+            const float radius = 4.6f;
+            float gate = (float)random.NextDouble() * Mathf.PI * 2f;
+            for (int i = 0; i < 26; i++)
+            {
+                float a = i / 26f * Mathf.PI * 2f;
+                if (Mathf.Abs(Mathf.DeltaAngle(a * Mathf.Rad2Deg, gate * Mathf.Rad2Deg)) < 20f) continue; // the gate
+                float h = 1.2f + (float)random.NextDouble() * 0.35f;
+                Piece(site, seed, PrimitiveType.Cylinder, "Palisade Stake", cx + Mathf.Sin(a) * radius, cz + Mathf.Cos(a) * radius, h * 0.5f,
+                    new Vector3(0.22f, h * 0.5f, 0.22f), Quaternion.Euler((float)random.NextDouble() * 6f - 3f, 0f, (float)random.NextDouble() * 6f - 3f), wood);
+            }
+            for (int i = 0; i < 3; i++)
+            {
+                float a = gate + Mathf.PI + (i - 1) * 1.1f;
+                float x = cx + Mathf.Sin(a) * 2.6f, z = cz + Mathf.Cos(a) * 2.6f;
+                Quaternion facing = Quaternion.Euler(0f, a * Mathf.Rad2Deg, 0f);
+                Piece(site, seed, PrimitiveType.Cube, "Hut", x, z, 0.5f, new Vector3(1.5f, 1f, 1.3f), facing, wood);
+                Piece(site, seed, PrimitiveType.Cube, "Thatch Roof", x, z, 1.25f, new Vector3(1.25f, 0.5f, 1.25f),
+                    facing * Quaternion.Euler(0f, 0f, 45f), thatch);
+            }
+            // Campfire: a ring of stones round the embers.
+            for (int i = 0; i < 7; i++)
+            {
+                float a = i / 7f * Mathf.PI * 2f;
+                Piece(site, seed, PrimitiveType.Cube, "Fire Stone", cx + Mathf.Sin(a) * 0.55f, cz + Mathf.Cos(a) * 0.55f, 0.1f,
+                    new Vector3(0.25f, 0.2f, 0.25f), Quaternion.Euler(0f, a * 57f, 0f), stone);
+            }
+            Piece(site, seed, PrimitiveType.Cube, "Embers", cx, cz, 0.08f, new Vector3(0.5f, 0.12f, 0.5f), Quaternion.Euler(0f, 30f, 0f), pirate);
+            for (int i = 0; i < 2; i++)
+                Piece(site, seed, PrimitiveType.Cylinder, "Firewood", cx, cz, 0.15f, new Vector3(0.1f, 0.4f, 0.1f),
+                    Quaternion.Euler(70f, i * 90f + 20f, 0f), wood);
+            for (int i = 0; i < 4; i++)
+            {
+                float a = gate + Mathf.PI * 0.5f + i * 0.35f;
+                Piece(site, seed, PrimitiveType.Cylinder, "Rum Barrel", cx + Mathf.Sin(a) * 3.6f, cz + Mathf.Cos(a) * 3.6f, 0.3f,
+                    new Vector3(0.45f, 0.3f, 0.45f), Quaternion.identity, wood);
+            }
+            // The black flag on a tall pole.
+            float fx = cx + Mathf.Sin(gate + 0.5f) * 1.6f, fz = cz + Mathf.Cos(gate + 0.5f) * 1.6f;
+            Piece(site, seed, PrimitiveType.Cylinder, "Flagpole", fx, fz, 2.2f, new Vector3(0.12f, 2.2f, 0.12f), Quaternion.identity, wood);
+            Piece(site, seed, PrimitiveType.Cube, "Black Flag", fx + 0.55f, fz, 3.9f, new Vector3(1.1f, 0.65f, 0.06f), Quaternion.identity, pirate);
+        }
+
+        /// <summary>Where the old charts point: a cairn of stones with a crossed-plank marker and a warning skull on a stake.</summary>
+        private void AddTreasureCairn(ArchipelagoWorld.IslandSite site, int seed, Vector3 centre, System.Random random,
+            Material treasure, Material wood, Material stone)
+        {
+            float cx = centre.x, cz = centre.z;
+            float[] sizes = { 1.4f, 1f, 0.6f };
+            float lift = 0f;
+            for (int tier = 0; tier < sizes.Length; tier++)
+            {
+                float s = sizes[tier];
+                Piece(site, seed, PrimitiveType.Cube, "Cairn Stone", cx, cz, lift + s * 0.3f, new Vector3(s, s * 0.6f, s),
+                    Quaternion.Euler(0f, tier * 27f + (float)random.NextDouble() * 20f, 0f), stone);
+                lift += s * 0.6f;
+            }
+            float px = cx + 1.8f, pz = cz + 0.4f;
+            for (int i = 0; i < 2; i++)
+                Piece(site, seed, PrimitiveType.Cube, "Marker Plank", px, pz, 0.7f, new Vector3(0.14f, 1.3f, 0.06f),
+                    Quaternion.Euler(0f, 0f, i == 0 ? 40f : -40f), wood);
+            Piece(site, seed, PrimitiveType.Cylinder, "Warning Stake", cx - 1.6f, cz - 0.9f, 0.7f, new Vector3(0.08f, 0.7f, 0.08f), Quaternion.identity, wood);
+            Piece(site, seed, PrimitiveType.Sphere, "Skull", cx - 1.6f, cz - 0.9f, 1.5f, new Vector3(0.3f, 0.34f, 0.32f), Quaternion.identity, treasure);
+            for (int i = 0; i < 5; i++)
+            {
+                float a = (float)random.NextDouble() * Mathf.PI * 2f, d = 2.2f + (float)random.NextDouble() * 1.5f;
+                Piece(site, seed, PrimitiveType.Cube, "Scattered Stone", cx + Mathf.Sin(a) * d, cz + Mathf.Cos(a) * d, 0.12f,
+                    new Vector3(0.4f, 0.25f, 0.35f), Quaternion.Euler(0f, a * 57f, 10f), stone);
+            }
         }
 
         /// <summary>Highest ground near the middle of the island, for flags and markers.</summary>

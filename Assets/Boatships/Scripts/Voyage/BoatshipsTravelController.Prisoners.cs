@@ -131,7 +131,7 @@ namespace Boatships
                     economy.RecruitPrisoner(id);
                     Notify(economy.LastMessage);
                     PrisonersMenu(atPort, back);
-                }, economy.Crew.Count < 24));
+                }, economy.Crew.Count < PortEconomy.CrewLimit));
             }
             options.Add(new MapMenuOption(atPort ? "Release them all ashore" : "Set them all adrift in a longboat", () =>
             {
